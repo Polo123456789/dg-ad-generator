@@ -1,0 +1,6 @@
+{
+  "name": "Generador de Anuncios con IA",
+  "description": "Una aplicación que genera ideas para campañas publicitarias, incluyendo títulos, subtítulos e imágenes usando Gemini e Imagen. Los usuarios pueden refinar y regenerar anuncios sobre la marcha.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
