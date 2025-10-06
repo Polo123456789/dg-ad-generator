@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import type { AdCreative, AdCreativeText } from './types';
 import { generateAdCreatives, generateAdImage, summarizeUrlContent, editAdImage } from './services/geminiService';
 import CampaignInput from './components/CampaignInput';
@@ -35,6 +35,8 @@ const App: React.FC = () => {
   const [numberOfImages, setNumberOfImages] = useState(3);
   const [styleGuideContent, setStyleGuideContent] = useState<string | null>(null);
   const [attachStyleGuideDirectly, setAttachStyleGuideDirectly] = useState<boolean>(false);
+  
+  const importInputRef = useRef<HTMLInputElement>(null);
 
 
   const handleGenerateIdeas = useCallback(async () => {
@@ -214,22 +216,134 @@ const App: React.FC = () => {
     // Do not reset form state or totalCost
   };
 
+  const handleExport = useCallback(() => {
+    if (!adCreatives) return;
+
+    const exportData = {
+        adCreatives,
+        totalCost,
+        urlSummaryForDisplay,
+        formState: {
+            objective,
+            audienceAction,
+            keyMessage,
+            context,
+            aspectRatio,
+            numberOfImages,
+            styleGuideContent,
+            attachStyleGuideDirectly,
+        }
+    };
+
+    const jsonString = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ad-campaign-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [adCreatives, totalCost, urlSummaryForDisplay, objective, audienceAction, keyMessage, context, aspectRatio, numberOfImages, styleGuideContent, attachStyleGuideDirectly]);
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+        try {
+            const text = event.target?.result as string;
+            const data = JSON.parse(text);
+
+            // Basic validation
+            if (!data.adCreatives || !data.formState || typeof data.totalCost === 'undefined') {
+                throw new Error("El archivo de importación no es válido o está corrupto.");
+            }
+            
+            // Restore state
+            setAdCreatives(data.adCreatives);
+            setTotalCost(data.totalCost);
+            setUrlSummaryForDisplay(data.urlSummaryForDisplay || null);
+
+            const {
+                objective,
+                audienceAction,
+                keyMessage,
+                context,
+                aspectRatio,
+                numberOfImages,
+                styleGuideContent,
+                attachStyleGuideDirectly,
+            } = data.formState;
+
+            setObjective(objective);
+            setAudienceAction(audienceAction);
+            setKeyMessage(keyMessage);
+            setContext(context);
+            setAspectRatio(aspectRatio);
+            setNumberOfImages(numberOfImages);
+            setStyleGuideContent(styleGuideContent || null);
+            setAttachStyleGuideDirectly(attachStyleGuideDirectly);
+
+            setError(null);
+            setIsGeneratingInitial(false);
+
+        } catch (err) {
+            console.error("Error importing file:", err);
+            setError(formatError(err instanceof Error ? err.message : "Error al procesar el archivo."));
+        } finally {
+            // Reset file input so the same file can be imported again
+            if (importInputRef.current) {
+                importInputRef.current.value = '';
+            }
+        }
+    };
+    reader.onerror = () => {
+         setError("No se pudo leer el archivo seleccionado.");
+         if (importInputRef.current) {
+            importInputRef.current.value = '';
+         }
+    };
+    reader.readAsText(file);
+  };
+
+
   return (
     <div className="min-h-screen text-slate-200 p-4 sm:p-6 md:p-8 flex flex-col">
-      <header className="w-full max-w-7xl mx-auto flex justify-between items-center mb-8">
+      <header className="w-full max-w-7xl mx-auto flex justify-between items-center mb-8 flex-wrap gap-4">
         <div className="flex items-center gap-4">
             <img src="https://dhgf5mcbrms62.cloudfront.net/29462425/header-fcHJMd/DVnsPlP-200x200.webp" alt="Logo de la aplicación" className="h-12 w-auto rounded-lg" />
             <h1 className="text-2xl md:text-3xl font-bold text-slate-100">Generador de Anuncios</h1>
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2 sm:gap-4">
             <div className="text-right">
                 <p className="text-sm text-slate-400">Costo Estimado</p>
                 <p className="text-lg font-bold text-green-400">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalCost)}</p>
             </div>
+            
+            <input 
+                type="file" 
+                ref={importInputRef} 
+                onChange={handleImport}
+                accept=".json"
+                className="sr-only" 
+                id="import-input"
+            />
+            <label htmlFor="import-input" className="cursor-pointer bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
+                Importar
+            </label>
+
             {adCreatives && (
+              <>
+                <button onClick={handleExport} className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
+                    Exportar
+                </button>
                 <button onClick={handleGoBack} className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
                     Regresar
                 </button>
+              </>
             )}
         </div>
       </header>
