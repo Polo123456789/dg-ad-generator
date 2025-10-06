@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import Spinner from './Spinner';
 import Icon from './Icon';
 
@@ -17,6 +17,10 @@ interface CampaignInputProps {
   setAspectRatio: (value: string) => void;
   numberOfImages: number;
   setNumberOfImages: (value: number) => void;
+  styleGuideContent: string | null;
+  setStyleGuideContent: (value: string | null) => void;
+  attachStyleGuideDirectly: boolean;
+  setAttachStyleGuideDirectly: (value: boolean) => void;
 }
 
 const CampaignInput: React.FC<CampaignInputProps> = ({ 
@@ -34,12 +38,42 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
   setAspectRatio,
   numberOfImages,
   setNumberOfImages,
+  styleGuideContent,
+  setStyleGuideContent,
+  attachStyleGuideDirectly,
+  setAttachStyleGuideDirectly,
 }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (audienceAction.trim() && keyMessage.trim() && !isLoading) {
       onSubmit();
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        setStyleGuideContent(text);
+      };
+      reader.onerror = () => {
+        console.error("Error reading file");
+        setStyleGuideContent(null);
+      };
+      reader.readAsText(file);
+    } else {
+      setStyleGuideContent(null);
+    }
+  };
+
+  const handleClearFile = () => {
+    setStyleGuideContent(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -111,6 +145,48 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
               placeholder="Ej: Juguete para morder ultra resistente, hecho de caucho natural no tóxico. También puedes pegar URLs como https://mi-tienda-de-mascotas.com/productos/juguete-indestructible"
               disabled={isLoading}
             />
+        </div>
+
+        <div>
+            <label htmlFor="style-guide" className={labelClassName}>
+                5. Guía de Estilo (Opcional)
+            </label>
+            <p className="text-sm text-slate-400 mb-3">Adjunta un archivo .txt o .md con reglas de estilo (colores, tipografía, ambiente general, etc.) para aplicar a las imágenes.</p>
+            <div className="flex items-center gap-4">
+                <label className="flex-grow bg-slate-900/80 border border-slate-600 rounded-lg p-3 text-slate-300 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition duration-200 cursor-pointer hover:bg-slate-800">
+                    <input 
+                        id="style-guide"
+                        ref={fileInputRef}
+                        type="file" 
+                        accept=".txt,.md"
+                        onChange={handleFileChange}
+                        className="sr-only"
+                        disabled={isLoading}
+                    />
+                    <span className="truncate">{styleGuideContent ? `Archivo cargado (${styleGuideContent.length} caracteres)` : 'Seleccionar archivo...'}</span>
+                </label>
+                {styleGuideContent && (
+                     <button type="button" onClick={handleClearFile} className="text-slate-400 hover:text-white transition-colors p-2" aria-label="Limpiar archivo">
+                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                         </svg>
+                     </button>
+                )}
+            </div>
+            <div className="mt-4 flex items-center">
+                <input
+                    id="attach-directly"
+                    type="checkbox"
+                    checked={attachStyleGuideDirectly}
+                    onChange={(e) => setAttachStyleGuideDirectly(e.target.checked)}
+                    disabled={isLoading || !styleGuideContent}
+                    className="h-4 w-4 rounded border-slate-500 bg-slate-700 text-indigo-600 focus:ring-indigo-600 disabled:opacity-50"
+                />
+                <label htmlFor="attach-directly" className={`ml-3 block text-sm text-slate-300 ${isLoading || !styleGuideContent ? 'text-slate-500' : ''}`}>
+                    Adjuntar guía de estilo directamente al generador de imágenes.
+                </label>
+            </div>
+            <p className="text-xs text-slate-500 mt-2 ml-7">Si está activado, la guía se aplica a la imagen final. Si no, influye en la creación de los prompts de imagen.</p>
         </div>
 
         <div className="pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">

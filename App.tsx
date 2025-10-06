@@ -33,6 +33,9 @@ const App: React.FC = () => {
   const [context, setContext] = useState('');
   const [aspectRatio, setAspectRatio] = useState('3:4');
   const [numberOfImages, setNumberOfImages] = useState(3);
+  const [styleGuideContent, setStyleGuideContent] = useState<string | null>(null);
+  const [attachStyleGuideDirectly, setAttachStyleGuideDirectly] = useState<boolean>(false);
+
 
   const handleGenerateIdeas = useCallback(async () => {
     if (!audienceAction.trim() || !keyMessage.trim()) {
@@ -70,7 +73,11 @@ const App: React.FC = () => {
       }
 
       // 3. Genera los textos de los anuncios con el brief enriquecido.
-      const textCreatives: AdCreativeText[] = await generateAdCreatives(campaignBrief, numberOfImages);
+      const textCreatives: AdCreativeText[] = await generateAdCreatives(
+        campaignBrief, 
+        numberOfImages,
+        !attachStyleGuideDirectly ? styleGuideContent : null
+      );
       
       const initialCreatives: AdCreative[] = textCreatives.map((tc, index) => ({
         ...tc,
@@ -90,7 +97,13 @@ const App: React.FC = () => {
         );
 
         try {
-            const imageUrl = await generateAdImage(creative.title, creative.subtitle, creative.imagePrompt, creative.aspectRatio);
+            const imageUrl = await generateAdImage(
+              creative.title, 
+              creative.subtitle, 
+              creative.imagePrompt, 
+              creative.aspectRatio,
+              attachStyleGuideDirectly ? styleGuideContent : null
+            );
             setAdCreatives(prev =>
                 prev!.map(c => c.id === creative.id ? { ...c, images: [{ url: imageUrl, aspectRatio: creative.aspectRatio }], currentImageIndex: 0, isGenerating: false } : c)
             );
@@ -109,7 +122,7 @@ const App: React.FC = () => {
       setError(formatError(e));
       setIsGeneratingInitial(false);
     }
-  }, [objective, audienceAction, keyMessage, context, numberOfImages, aspectRatio]);
+  }, [objective, audienceAction, keyMessage, context, numberOfImages, aspectRatio, styleGuideContent, attachStyleGuideDirectly]);
 
 
   const handleRegenerateImage = useCallback(async (id: string, newTitle: string, newSubtitle: string, newAspectRatio: string) => {
@@ -123,7 +136,13 @@ const App: React.FC = () => {
     );
 
     try {
-      const newImageUrl = await generateAdImage(newTitle, newSubtitle, targetCreative.imagePrompt, newAspectRatio);
+      const newImageUrl = await generateAdImage(
+        newTitle, 
+        newSubtitle, 
+        targetCreative.imagePrompt, 
+        newAspectRatio,
+        attachStyleGuideDirectly ? styleGuideContent : null
+      );
       setAdCreatives(prev =>
         prev!.map(c => c.id === id ? { ...c, images: [...c.images, { url: newImageUrl, aspectRatio: newAspectRatio }], currentImageIndex: c.images.length, isGenerating: false } : c)
       );
@@ -135,7 +154,7 @@ const App: React.FC = () => {
         prev!.map(c => c.id === id ? { ...c, isGenerating: false } : c)
       );
     }
-  }, [adCreatives]);
+  }, [adCreatives, attachStyleGuideDirectly, styleGuideContent]);
 
   const handleEditImage = useCallback(async (id: string, editPrompt: string) => {
     const targetCreative = adCreatives?.find(c => c.id === id);
@@ -232,6 +251,10 @@ const App: React.FC = () => {
             setAspectRatio={setAspectRatio}
             numberOfImages={numberOfImages}
             setNumberOfImages={setNumberOfImages}
+            styleGuideContent={styleGuideContent}
+            setStyleGuideContent={setStyleGuideContent}
+            attachStyleGuideDirectly={attachStyleGuideDirectly}
+            setAttachStyleGuideDirectly={setAttachStyleGuideDirectly}
             />
         ) : (
           <div className="w-full max-w-3xl mx-auto grid grid-cols-1 gap-8">

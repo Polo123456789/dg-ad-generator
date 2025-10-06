@@ -51,13 +51,14 @@ export async function summarizeUrlContent(contextWithUrls: string): Promise<stri
  * Genera conceptos de anuncios basados en un brief de campaña.
  * Esta función espera una respuesta JSON estructurada y no utiliza herramientas.
  */
-export async function generateAdCreatives(campaignBrief: string, numberOfCreatives: number): Promise<AdCreativeText[]> {
+export async function generateAdCreatives(campaignBrief: string, numberOfCreatives: number, styleGuide?: string | null): Promise<AdCreativeText[]> {
   const prompt = `
     Eres un experto en marketing y director creativo de clase mundial, especializado en el mercado de mascotas (concentrados, accesorios, etc.).
     Un usuario está creando una campaña publicitaria y ha proporcionado el siguiente brief:
     ---
     ${campaignBrief}
     ---
+    ${styleGuide ? `\nAdicionalmente, debes incorporar las siguientes reglas de la guía de estilo al crear CADA UNO de los prompts para la imagen. Estas reglas son obligatorias:\nGUÍA DE ESTILO:\n${styleGuide}\n---` : ''}
 
     Basado en este brief, genera ${numberOfCreatives} conceptos de anuncios distintos y atractivos.
     
@@ -116,8 +117,8 @@ export async function generateAdCreatives(campaignBrief: string, numberOfCreativ
   }
 }
 
-export async function generateAdImage(title: string, subtitle: string, imagePrompt: string, aspectRatio: string): Promise<string> {
-    const fullPrompt = `Crea una imagen publicitaria fotorrealista y visualmente impactante para el concepto: "${imagePrompt}". La imagen debe incluir de forma destacada y legible el texto del título: "${title}". También debe integrar de forma elegante el subtítulo: "${subtitle}". Es CRÍTICO que ambos textos sean perfectamente legibles. Para asegurar la legibilidad, utiliza un color de fuente que genere un alto contraste con los colores de fondo de la imagen. Si es necesario, aplica un sutil contorno o sombra al texto para que destaque sobre fondos complejos. El diseño debe ser profesional, con una composición y una iluminación excelentes, asegurando que el texto complemente la imagen.`;
+export async function generateAdImage(title: string, subtitle: string, imagePrompt: string, aspectRatio: string, styleGuide?: string | null): Promise<string> {
+    const fullPrompt = `Crea una imagen publicitaria fotorrealista y visualmente impactante para el concepto: "${imagePrompt}". La imagen debe incluir de forma destacada y legible el texto del título: "${title}". También debe integrar de forma elegante el subtítulo: "${subtitle}". Es CRÍTICO que ambos textos sean perfectamente legibles. Para asegurar la legibilidad, utiliza un color de fuente que genere un alto contraste con los colores de fondo de la imagen. Si es necesario, aplica un sutil contorno o sombra al texto para que destaque sobre fondos complejos. El diseño debe ser profesional, con una composición y una iluminación excelentes, asegurando que el texto complemente la imagen.${styleGuide ? `\n\nGUÍA DE ESTILO ADICIONAL QUE DEBE SEGUIRSE ESTRICTAMENTE:\n${styleGuide}` : ''}`;
     
     try {
         const response = await ai.models.generateImages({
@@ -143,7 +144,7 @@ export async function generateAdImage(title: string, subtitle: string, imageProm
 }
 
 export async function editAdImage(base64ImageData: string, mimeType: string, editPrompt: string): Promise<string> {
-    const imageEditModel = 'gemini-2.5-flash-image-preview';
+    const imageEditModel = 'gemini-2.5-flash-image';
 
     try {
         const response = await ai.models.generateContent({
