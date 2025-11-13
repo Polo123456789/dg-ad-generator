@@ -1,8 +1,10 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type { AdCreative, AdCreativeText } from './types';
 import { generateAdCreatives, generateAdImage, summarizeUrlContent, editAdImage } from './services/geminiService';
 import CampaignInput from './components/CampaignInput';
 import AdDisplay from './components/AdDisplay';
+
+const LOCAL_STORAGE_KEY = 'adCampaignSession';
 
 // Helper to format error for display for internal debugging
 const formatError = (e: unknown): string => {
@@ -37,6 +39,81 @@ const App: React.FC = () => {
   const [attachStyleGuideDirectly, setAttachStyleGuideDirectly] = useState<boolean>(false);
   
   const importInputRef = useRef<HTMLInputElement>(null);
+
+  // Memoize form state for useEffect dependency to prevent unnecessary re-saves
+  const formState = useMemo(() => ({
+    objective,
+    audienceAction,
+    keyMessage,
+    context,
+    aspectRatio,
+    numberOfImages,
+    styleGuideContent,
+    attachStyleGuideDirectly,
+  }), [
+    objective,
+    audienceAction,
+    keyMessage,
+    context,
+    aspectRatio,
+    numberOfImages,
+    styleGuideContent,
+    attachStyleGuideDirectly
+  ]);
+
+  // Effect to load session from localStorage on initial component mount
+  useEffect(() => {
+    try {
+        const savedSession = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (savedSession) {
+            const data = JSON.parse(savedSession);
+
+            if (data.adCreatives && data.formState && typeof data.totalCost !== 'undefined') {
+                setAdCreatives(data.adCreatives);
+                setTotalCost(data.totalCost);
+                setUrlSummaryForDisplay(data.urlSummaryForDisplay || null);
+
+                const {
+                    objective,
+                    audienceAction,
+                    keyMessage,
+                    context,
+                    aspectRatio,
+                    numberOfImages,
+                    styleGuideContent,
+                    attachStyleGuideDirectly,
+                } = data.formState;
+
+                setObjective(objective);
+                setAudienceAction(audienceAction);
+                setKeyMessage(keyMessage);
+                setContext(context);
+                setAspectRatio(aspectRatio);
+                setNumberOfImages(numberOfImages);
+                setStyleGuideContent(styleGuideContent || null);
+                setAttachStyleGuideDirectly(attachStyleGuideDirectly);
+            } else {
+                 localStorage.removeItem(LOCAL_STORAGE_KEY);
+            }
+        }
+    } catch (err) {
+        console.error("Error loading session from localStorage:", err);
+        localStorage.removeItem(LOCAL_STORAGE_KEY);
+    }
+  }, []); // Empty dependency array ensures this runs only once on mount
+
+  // Effect to save session to localStorage whenever key data changes
+  useEffect(() => {
+    if (adCreatives && adCreatives.length > 0) {
+        const sessionData = {
+            adCreatives,
+            totalCost,
+            urlSummaryForDisplay,
+            formState,
+        };
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sessionData));
+    }
+  }, [adCreatives, totalCost, urlSummaryForDisplay, formState]);
 
 
   const handleGenerateIdeas = useCallback(async () => {
@@ -215,6 +292,25 @@ const App: React.FC = () => {
     setUrlSummaryForDisplay(null);
     // Do not reset form state or totalCost
   };
+  
+  const handleClearSession = () => {
+    localStorage.removeItem(LOCAL_STORAGE_KEY);
+
+    setAdCreatives(null);
+    setError(null);
+    setIsGeneratingInitial(false);
+    setUrlSummaryForDisplay(null);
+    setTotalCost(0);
+
+    setObjective('Aumentar ventas');
+    setAudienceAction('');
+    setKeyMessage('');
+    setContext('');
+    setAspectRatio('3:4');
+    setNumberOfImages(3);
+    setStyleGuideContent(null);
+    setAttachStyleGuideDirectly(false);
+  };
 
   const handleExport = useCallback(() => {
     if (!adCreatives) return;
@@ -335,16 +431,23 @@ const App: React.FC = () => {
                 Importar
             </label>
 
+            <button 
+                onClick={handleExport} 
+                disabled={!adCreatives}
+                className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed"
+            >
+                Exportar
+            </button>
+            
             {adCreatives && (
-              <>
-                <button onClick={handleExport} className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
-                    Exportar
-                </button>
-                <button onClick={handleGoBack} className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
-                    Regresar
-                </button>
-              </>
+              <button onClick={handleGoBack} className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
+                  Regresar
+              </button>
             )}
+
+            <button onClick={handleClearSession} title="Limpiar todo y empezar de nuevo" className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
+                Limpiar
+            </button>
         </div>
       </header>
 
