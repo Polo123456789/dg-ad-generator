@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import type { AdCreative, AdCreativeText, Asset, AdVariant } from './types';
-import { generateAdCreatives, generateAdImage, summarizeUrlContent, editAdImage } from './services/geminiService';
+import { generateAdCreatives, generateAdImage, summarizeUrlContent, editAdImage, generatePreviewImage } from './services/geminiService';
 import CampaignInput from './components/CampaignInput';
 import AdDisplay from './components/AdDisplay';
 import Spinner from './components/Spinner';
@@ -211,6 +211,8 @@ const App: React.FC = () => {
         assets 
       );
       
+      const primaryRatio = aspectRatios[0];
+
       // Initialize structure
       const initialCreatives: AdCreative[] = textCreatives.map((tc, index) => {
           const variants: Record<string, AdVariant> = {};
@@ -219,8 +221,9 @@ const App: React.FC = () => {
               variants[ratio] = {
                   aspectRatio: ratio,
                   imagePrompt: tc.variantPrompts[ratio] || `Error: No prompt for ${ratio}`,
-                  isGenerating: true,
-                  image: undefined
+                  isGenerating: ratio === primaryRatio, // Only first one is generating (preview)
+                  image: undefined,
+                  isPreview: false
               };
           });
 
@@ -230,72 +233,72 @@ const App: React.FC = () => {
             subtitle: tc.subtitle || tc.rationale,
             rationale: tc.rationale,
             variants: variants,
-            activeVariant: aspectRatios[0], // Default to first selected
+            activeVariant: primaryRatio, // Default to first selected
             imageSize: imageSize,
+            status: 'generating_preview'
           };
       });
 
       setAdCreatives(initialCreatives);
       setIsGeneratingInitial(false);
 
-      // Trigger parallel generation for ALL variants across ALL creatives
-      const allPromises = initialCreatives.flatMap(creative => 
-          aspectRatios.map(async (ratio) => {
-              const variant = creative.variants[ratio];
-              try {
-                  const imageUrl = await generateAdImage(
-                      variant.imagePrompt, 
-                      ratio,
-                      creative.imageSize,
-                      assets
-                  );
-                  
-                  setAdCreatives(prev => {
-                      if (!prev) return null;
-                      return prev.map(c => {
-                          if (c.id === creative.id) {
-                              return {
-                                  ...c,
-                                  variants: {
-                                      ...c.variants,
-                                      [ratio]: {
-                                          ...c.variants[ratio],
-                                          image: { url: imageUrl, aspectRatio: ratio },
-                                          isGenerating: false
-                                      }
+      // Trigger parallel PREVIEW generation for the FIRST variant ONLY using Imagen 4
+      const previewPromises = initialCreatives.map(async (creative) => {
+          const ratio = primaryRatio;
+          const variant = creative.variants[ratio];
+          try {
+              // Use Imagen 4 for fast preview
+              const imageUrl = await generatePreviewImage(variant.imagePrompt, ratio);
+              
+              setAdCreatives(prev => {
+                  if (!prev) return null;
+                  return prev.map(c => {
+                      if (c.id === creative.id) {
+                          return {
+                              ...c,
+                              status: 'preview_ready',
+                              variants: {
+                                  ...c.variants,
+                                  [ratio]: {
+                                      ...c.variants[ratio],
+                                      image: { url: imageUrl, aspectRatio: ratio },
+                                      isGenerating: false,
+                                      isPreview: true // Flag as preview
                                   }
-                              };
-                          }
-                          return c;
-                      });
+                              }
+                          };
+                      }
+                      return c;
                   });
-                  setTotalCost(prevCost => prevCost + 0.14);
+              });
+              // Preview is cheaper (or free in some tiers, assume small cost)
+              setTotalCost(prevCost => prevCost + 0.01); 
 
-              } catch (e) {
-                   console.error(`Failed to generate ${ratio} for creative ${creative.id}:`, e);
-                   setAdCreatives(prev => {
-                      if (!prev) return null;
-                      return prev.map(c => {
-                          if (c.id === creative.id) {
-                              return {
-                                  ...c,
-                                  variants: {
-                                      ...c.variants,
-                                      [ratio]: {
-                                          ...c.variants[ratio],
-                                          isGenerating: false // Stop spinner even if failed
-                                      }
+          } catch (e) {
+               console.error(`Failed to generate preview for creative ${creative.id}:`, e);
+               setAdCreatives(prev => {
+                  if (!prev) return null;
+                  return prev.map(c => {
+                      if (c.id === creative.id) {
+                          return {
+                              ...c,
+                              status: 'preview_ready', // Allow them to try regenerate manually or approve anyway
+                              variants: {
+                                  ...c.variants,
+                                  [ratio]: {
+                                      ...c.variants[ratio],
+                                      isGenerating: false
                                   }
-                              };
-                          }
-                          return c;
-                      });
+                              }
+                          };
+                      }
+                      return c;
                   });
-              }
-          })
-      );
+              });
+          }
+      });
       
-      await Promise.all(allPromises);
+      await Promise.all(previewPromises);
 
     } catch (e) {
       console.error(e);
@@ -303,6 +306,100 @@ const App: React.FC = () => {
       setIsGeneratingInitial(false);
     }
   }, [objective, audienceAction, keyMessage, context, numberOfImages, aspectRatios, imageSize, styleGuideContent, attachStyleGuideDirectly, assets]);
+
+
+  // Handler to Approve a Concept and Trigger Full High-Quality Generation
+  const handleApproveCreative = useCallback(async (creativeId: string) => {
+    const creative = adCreatives?.find(c => c.id === creativeId);
+    if (!creative) return;
+
+    // Update status to full generation
+    setAdCreatives(prev => prev!.map(c => {
+        if (c.id === creativeId) {
+            // Mark all variants as generating
+            const newVariants = { ...c.variants };
+            Object.keys(newVariants).forEach(key => {
+                newVariants[key] = { ...newVariants[key], isGenerating: true };
+            });
+
+            return {
+                ...c,
+                status: 'generating_full',
+                variants: newVariants
+            };
+        }
+        return c;
+    }));
+
+    // Trigger Generation for ALL ratios using Gemini 3 Pro
+    const ratiosToGenerate = Object.keys(creative.variants);
+    
+    const promises = ratiosToGenerate.map(async (ratio) => {
+        const variant = creative.variants[ratio];
+        try {
+            const imageUrl = await generateAdImage(
+                variant.imagePrompt,
+                ratio,
+                creative.imageSize,
+                assets
+            );
+
+            setAdCreatives(prev => {
+                if (!prev) return null;
+                return prev.map(c => {
+                    if (c.id === creativeId) {
+                        return {
+                            ...c,
+                            variants: {
+                                ...c.variants,
+                                [ratio]: {
+                                    ...c.variants[ratio],
+                                    image: { url: imageUrl, aspectRatio: ratio },
+                                    isGenerating: false,
+                                    isPreview: false // High Quality
+                                }
+                            }
+                        };
+                    }
+                    return c;
+                });
+            });
+            setTotalCost(prevCost => prevCost + 0.14);
+
+        } catch (e) {
+            console.error(`Failed to generate full quality ${ratio} for creative ${creativeId}:`, e);
+            // Handle error state for specific variant
+             setAdCreatives(prev => {
+                if (!prev) return null;
+                return prev.map(c => {
+                    if (c.id === creativeId) {
+                        return {
+                            ...c,
+                            variants: {
+                                ...c.variants,
+                                [ratio]: {
+                                    ...c.variants[ratio],
+                                    isGenerating: false
+                                }
+                            }
+                        };
+                    }
+                    return c;
+                });
+            });
+        }
+    });
+
+    await Promise.all(promises);
+
+    setAdCreatives(prev => prev!.map(c => {
+        if (c.id === creativeId) {
+            return { ...c, status: 'completed' };
+        }
+        return c;
+    }));
+
+  }, [adCreatives, assets]);
 
 
   const handleRegenerateVariant = useCallback(async (id: string, ratio: string, newPrompt: string, newImageSize: string) => {
@@ -350,7 +447,8 @@ const App: React.FC = () => {
                         [ratio]: {
                             ...c.variants[ratio],
                             image: { url: newImageUrl, aspectRatio: ratio },
-                            isGenerating: false
+                            isGenerating: false,
+                            isPreview: false // Regenerated is always high quality
                         }
                     }
                 };
@@ -408,7 +506,8 @@ const App: React.FC = () => {
                             [ratio]: {
                                 ...c.variants[ratio],
                                 image: { url: newImageUrl, aspectRatio: ratio },
-                                isGenerating: false
+                                isGenerating: false,
+                                isPreview: false
                             }
                         }
                     };
@@ -605,6 +704,7 @@ const App: React.FC = () => {
                 onRegenerate={handleRegenerateVariant} 
                 onEdit={handleEditVariant}
                 onSetActiveVariant={handleSetActiveVariant}
+                onApprove={handleApproveCreative} // Pass approval handler
               />
             ))}
           </div>

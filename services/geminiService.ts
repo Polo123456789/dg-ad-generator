@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type, FunctionDeclaration, Chat } from "@google/genai";
 import type { AdCreativeText, Asset } from '../types';
 
@@ -6,6 +7,7 @@ const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const textModel = "gemini-2.5-flash";
 const imageModel = "gemini-3-pro-image-preview";
+const previewModel = "imagen-4.0-generate-001"; // Faster, cheaper model
 
 /**
  * Llama a Gemini con la herramienta googleSearch para analizar el contenido de las URLs 
@@ -168,6 +170,40 @@ export async function generateAdCreatives(
 
   } catch (error) {
     console.error("Error al generar creatividades:", error);
+    throw error;
+  }
+}
+
+/**
+ * Genera una imagen de PREVIEW rápida usando Imagen 4.
+ * Es más rápido y barato que Gemini 3 Pro.
+ */
+export async function generatePreviewImage(
+  prompt: string,
+  aspectRatio: string
+): Promise<string> {
+  const ai = getAI();
+  
+  // Clean prompt slightly for Imagen (remove internal instructional text if too heavy, but Imagen is robust)
+  // We'll pass the full prompt for now as it contains the visual description.
+  
+  try {
+    const response = await ai.models.generateImages({
+      model: previewModel,
+      prompt: prompt,
+      config: {
+        numberOfImages: 1,
+        outputMimeType: 'image/jpeg',
+        aspectRatio: aspectRatio, // Supports "1:1", "16:9", "9:16", "3:4", "4:3"
+      }
+    });
+
+    // Imagen response format extraction
+    const base64ImageBytes: string = response.generatedImages[0].image.imageBytes;
+    return `data:image/jpeg;base64,${base64ImageBytes}`;
+
+  } catch (error) {
+    console.error("Error generando preview con Imagen 4:", error);
     throw error;
   }
 }

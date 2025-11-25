@@ -9,6 +9,7 @@ interface AdDisplayProps {
   onRegenerate: (id: string, ratio: string, newPrompt: string, newImageSize: string) => void;
   onEdit: (id: string, ratio: string, editPrompt: string, imageSize: string) => void;
   onSetActiveVariant: (id: string, ratio: string) => void;
+  onApprove?: (id: string) => void;
 }
 
 const getAspectRatioClass = (ratio: string) => {
@@ -23,9 +24,10 @@ const getAspectRatioClass = (ratio: string) => {
     }
 };
 
-const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, onSetActiveVariant }) => {
+const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, onSetActiveVariant, onApprove }) => {
   const activeVariantKey = creative.activeVariant;
   const activeVariant = creative.variants[activeVariantKey];
+  const isPreviewMode = creative.status === 'preview_ready' || creative.status === 'generating_preview';
 
   const [promptContent, setPromptContent] = useState(activeVariant?.imagePrompt || '');
   const [imageSize, setImageSize] = useState(creative.imageSize || '1K');
@@ -56,26 +58,41 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
   const currentImageUrl = activeVariant.image?.url;
 
   return (
-    <div className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-indigo-500/20 hover:border-slate-600 flex flex-col md:flex-row h-auto min-h-[600px]">
+    <div className={`bg-slate-800/60 backdrop-blur-md border rounded-xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-indigo-500/20 flex flex-col md:flex-row h-auto min-h-[600px] ${isPreviewMode ? 'border-amber-500/50' : 'border-slate-700 hover:border-slate-600'}`}>
       
       {/* Left Column: Image Area */}
-      <div className="md:w-1/2 lg:w-3/5 bg-slate-900 flex flex-col border-b md:border-b-0 md:border-r border-slate-700">
+      <div className="md:w-1/2 lg:w-3/5 bg-slate-900 flex flex-col border-b md:border-b-0 md:border-r border-slate-700 relative">
         
+        {/* Preview Badge */}
+        {activeVariant.isPreview && (
+             <div className="absolute top-0 left-0 z-20 bg-amber-500 text-black text-xs font-bold px-3 py-1 rounded-br-lg shadow-md">
+                 PREVIEW (Imagen 4)
+             </div>
+        )}
+
         {/* Tabs for Aspect Ratios */}
         <div className="flex border-b border-slate-700 bg-slate-900 overflow-x-auto scrollbar-hide">
-            {availableRatios.map(ratio => (
-                <button
-                    key={ratio}
-                    onClick={() => onSetActiveVariant(creative.id, ratio)}
-                    className={`flex-1 py-3 px-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap
-                        ${activeVariantKey === ratio 
-                            ? 'border-indigo-500 text-white bg-slate-800' 
-                            : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-                        }`}
-                >
-                    {ratio}
-                </button>
-            ))}
+            {availableRatios.map(ratio => {
+                // Determine if tab should be disabled
+                const isTabDisabled = isPreviewMode && !creative.variants[ratio].image && !creative.variants[ratio].isGenerating;
+                
+                return (
+                    <button
+                        key={ratio}
+                        onClick={() => !isTabDisabled && onSetActiveVariant(creative.id, ratio)}
+                        disabled={isTabDisabled}
+                        className={`flex-1 py-3 px-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap
+                            ${activeVariantKey === ratio 
+                                ? 'border-indigo-500 text-white bg-slate-800' 
+                                : isTabDisabled
+                                    ? 'border-transparent text-slate-700 cursor-not-allowed'
+                                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                            }`}
+                    >
+                        {ratio}
+                    </button>
+                );
+            })}
         </div>
 
         {/* Main Image Viewport */}
@@ -84,15 +101,18 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
                 {activeVariant.isGenerating && (
                 <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center z-10 rounded-lg">
                     <Spinner className="w-10 h-10" />
-                    <p className="text-slate-300 mt-2 text-sm font-medium animate-pulse">Diseñando para {activeVariantKey}...</p>
+                    <p className="text-slate-300 mt-2 text-sm font-medium animate-pulse">
+                        {isPreviewMode ? 'Generando Preview (Imagen 4)...' : `Diseñando para ${activeVariantKey}...`}
+                    </p>
                 </div>
                 )}
                 {currentImageUrl ? (
                     <img src={currentImageUrl} alt={creative.title} className="w-full h-full object-contain bg-slate-950 rounded-lg" />
                 ) : (
                      !activeVariant.isGenerating && (
-                         <div className="w-full h-full bg-slate-800 rounded-lg flex items-center justify-center text-slate-500 text-sm">
-                             Esperando generación...
+                         <div className="w-full h-full bg-slate-800 rounded-lg flex items-center justify-center flex-col gap-2 text-slate-500 text-sm">
+                             <span className="text-2xl">⏳</span>
+                             <span>Esperando generación...</span>
                          </div>
                      )
                 )}
@@ -109,6 +129,28 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
 
           <div className="p-6 flex-grow flex flex-col space-y-6 overflow-y-auto">
             
+            {/* APPROVE ACTION FOR PREVIEW */}
+            {isPreviewMode && creative.status === 'preview_ready' && (
+                <div className="bg-amber-900/20 border border-amber-600/30 rounded-lg p-4 mb-4">
+                    <h4 className="text-amber-400 font-bold text-sm mb-2 flex items-center gap-2">
+                         <Icon name="sparkles" className="w-4 h-4" />
+                         Modo Vista Previa
+                    </h4>
+                    <p className="text-slate-300 text-xs mb-4">
+                        Este es un borrador rápido generado con Imagen 4. Si te gusta el concepto, aprruébalo para generar todos los formatos en Alta Calidad con Gemini 3 Pro.
+                    </p>
+                    <button
+                        onClick={() => onApprove && onApprove(creative.id)}
+                        className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold py-3 px-4 rounded-lg shadow-lg transform transition-all hover:scale-[1.02] flex items-center justify-center gap-2"
+                    >
+                         <span>Aprobar y Generar Todo (HD)</span>
+                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                         </svg>
+                    </button>
+                </div>
+            )}
+
             {/* Prompt Editor */}
             <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
@@ -124,55 +166,59 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
             </div>
 
             {/* Regeneration Controls */}
-            <div className="space-y-4">
-                <div>
-                    <label htmlFor={`image-size-${creative.id}`} className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Resolución</label>
-                    <select 
-                        id={`image-size-${creative.id}`}
-                        value={imageSize} 
-                        onChange={(e) => setImageSize(e.target.value)} 
-                        disabled={activeVariant.isGenerating} 
-                        className="w-full bg-slate-700 text-slate-200 text-sm font-medium py-2 px-3 rounded-lg hover:bg-slate-600 focus:ring-1 focus:ring-indigo-500 transition-colors"
-                    >
-                        <option value="1K">1K</option>
-                        <option value="2K">2K</option>
-                        <option value="4K">4K</option>
-                    </select>
-                </div>
+            {(!isPreviewMode) && (
+                <div className="space-y-4">
+                    <div>
+                        <label htmlFor={`image-size-${creative.id}`} className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Resolución</label>
+                        <select 
+                            id={`image-size-${creative.id}`}
+                            value={imageSize} 
+                            onChange={(e) => setImageSize(e.target.value)} 
+                            disabled={activeVariant.isGenerating} 
+                            className="w-full bg-slate-700 text-slate-200 text-sm font-medium py-2 px-3 rounded-lg hover:bg-slate-600 focus:ring-1 focus:ring-indigo-500 transition-colors"
+                        >
+                            <option value="1K">1K</option>
+                            <option value="2K">2K</option>
+                            <option value="4K">4K</option>
+                        </select>
+                    </div>
 
-                <button
-                    onClick={handleRegenerateClick}
-                    disabled={activeVariant.isGenerating}
-                    className="w-full flex items-center justify-center gap-2 bg-slate-700 text-slate-200 font-medium py-2.5 px-4 rounded-lg hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed transition-all duration-200"
-                >
-                    <Icon name="regenerate" className="w-5 h-5"/>
-                    Regenerar Variante {activeVariantKey}
-                </button>
-            </div>
-
-            {/* Edit Section */}
-            <div className="pt-6 border-t border-slate-700">
-                <label htmlFor={`edit-prompt-${creative.id}`} className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Edición Rápida (In-painting)</label>
-                <div className="flex gap-2">
-                    <textarea
-                        id={`edit-prompt-${creative.id}`}
-                        rows={1}
-                        value={editPrompt}
-                        onChange={(e) => setEditPrompt(e.target.value)}
-                        className="flex-grow bg-slate-700 text-slate-200 text-sm p-3 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none placeholder:text-slate-500 resize-none overflow-hidden"
-                        placeholder="Ej: Haz el texto rojo..."
-                        disabled={activeVariant.isGenerating || !activeVariant.image}
-                    />
                     <button
-                        onClick={handleEditClick}
-                        disabled={activeVariant.isGenerating || !editPrompt.trim() || !activeVariant.image}
-                        className="bg-indigo-600 text-white p-3 rounded-lg hover:bg-indigo-700 disabled:bg-slate-700 disabled:text-slate-500 transition-colors"
-                        title="Aplicar cambios"
+                        onClick={handleRegenerateClick}
+                        disabled={activeVariant.isGenerating}
+                        className="w-full flex items-center justify-center gap-2 bg-slate-700 text-slate-200 font-medium py-2.5 px-4 rounded-lg hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed transition-all duration-200"
                     >
-                        <Icon name="sparkles" className="w-5 h-5"/>
+                        <Icon name="regenerate" className="w-5 h-5"/>
+                        Regenerar Variante {activeVariantKey}
                     </button>
                 </div>
-            </div>
+            )}
+
+            {/* Edit Section */}
+            {(!isPreviewMode) && (
+                <div className="pt-6 border-t border-slate-700">
+                    <label htmlFor={`edit-prompt-${creative.id}`} className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Edición Rápida (In-painting)</label>
+                    <div className="flex gap-2">
+                        <textarea
+                            id={`edit-prompt-${creative.id}`}
+                            rows={1}
+                            value={editPrompt}
+                            onChange={(e) => setEditPrompt(e.target.value)}
+                            className="flex-grow bg-slate-700 text-slate-200 text-sm p-3 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none placeholder:text-slate-500 resize-none overflow-hidden"
+                            placeholder="Ej: Haz el texto rojo..."
+                            disabled={activeVariant.isGenerating || !activeVariant.image}
+                        />
+                        <button
+                            onClick={handleEditClick}
+                            disabled={activeVariant.isGenerating || !editPrompt.trim() || !activeVariant.image}
+                            className="bg-indigo-600 text-white p-3 rounded-lg hover:bg-indigo-700 disabled:bg-slate-700 disabled:text-slate-500 transition-colors"
+                            title="Aplicar cambios"
+                        >
+                            <Icon name="sparkles" className="w-5 h-5"/>
+                        </button>
+                    </div>
+                </div>
+            )}
           </div>
       </div>
     </div>

@@ -9,6 +9,7 @@ export interface AdVariant {
   imagePrompt: string; // The specific prompt for this ratio
   image?: AdImage;
   isGenerating: boolean;
+  isPreview?: boolean; // New flag for Imagen 4 previews
 }
 
 export interface AdCreative {
@@ -19,6 +20,7 @@ export interface AdCreative {
   variants: Record<string, AdVariant>; // Keyed by ratio e.g. "9:16"
   activeVariant: string; // The currently selected ratio tab
   imageSize: string; // Shared setting
+  status: 'generating_text' | 'generating_preview' | 'preview_ready' | 'generating_full' | 'completed'; // New status workflow
 }
 
 export interface AdCreativeText {
