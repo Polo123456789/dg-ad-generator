@@ -30,3 +30,9 @@ export interface Asset {
   name: string; // Filename to help the AI identify the asset
   previewUrl: string; // Full data URL for UI display
 }
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+  isThinking?: boolean;
+}

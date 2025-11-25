@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, FunctionDeclaration, Chat } from "@google/genai";
 import type { AdCreativeText, Asset } from '../types';
 
 // Helper para crear una nueva instancia con la clave API actual
@@ -76,12 +76,18 @@ export async function generateAdCreatives(
     2. Los nombres de estos archivos corresponden a: ${assetNames}.
     3. Debes usar TODOS los assets disponibles si es posible. En tus instrucciones (gemini3Prompt), indica explícitamente dónde colocar cada asset refiriéndote a ellos por su nombre (ej: "Coloca el asset '${assets?.[0]?.name || 'logo'}' en la esquina superior derecha").
     4. Sigue estrictamente la guía de estilo si se proporciona.
-    5. El 'gemini3Prompt' debe ser una instrucción detallada y estructurada para la IA de imagen.
+    5. El 'gemini3Prompt' debe ser una instrucción detallada y estructurada para la IA de imagen. 
+    
+    IMPORTANTE FORMATO:
+    El campo 'gemini3Prompt' DEBE usar saltos de línea explícitos para separar claramente el Concepto, el Prompt Visual y las Instrucciones de Montaje. No entregues un bloque de texto sólido. Queremos que sea legible.
     
     EJEMPLO DE ESTRUCTURA DEL 'gemini3Prompt' (Úsalo como referencia de calidad):
     ---
     Concepto: [Nombre del concepto]
-    Prompt Visual: Vertical 3:4 shot. Fondo elegante y oscuro. Primer plano de una mano acariciando un perro. Iluminación cinemática.
+    
+    Prompt Visual: 
+    Vertical 3:4 shot. Fondo elegante y oscuro. Primer plano de una mano acariciando un perro. Iluminación cinemática.
+    
     Instrucciones de Montaje:
     - Fondo: La imagen generada descrita arriba.
     - Centro: Coloca el producto '${assets?.[0]?.name || 'producto'}' nítido en el centro.
@@ -115,7 +121,7 @@ export async function generateAdCreatives(
           },
           gemini3Prompt: {
             type: Type.STRING,
-            description: "El prompt maestro COMPLETO y detallado que se enviará a la IA de imagen. Debe incluir: Descripción visual de la escena, Instrucciones de montaje (Layout), Textos específicos a incluir (Headline, CTA, Oferta) con sugerencias de tipografía y color, y Ubicación específica de los assets adjuntos."
+            description: "El prompt maestro COMPLETO. IMPORTANTE: Usa saltos de línea para separar secciones (Concepto, Visual, Montaje) para que sea legible."
           }
         },
       required: ["title", "subtitle", "gemini3Prompt", "rationale"]
@@ -172,14 +178,7 @@ export async function generateAdImage(
     const ai = getAI();
     
     // El prompt ya viene "cocinado" desde generateAdCreatives, solo añadimos un refuerzo técnico final
-    const finalPrompt = `
-    ${gemini3Prompt}
-    
-    INSTRUCCIONES TÉCNICAS ADICIONALES:
-    - Estilo Fotorrealista y Profesional.
-    - Asegura que TODO el texto solicitado sea perfectamente legible. Usa alto contraste.
-    - Integra los assets visuales proporcionados (imágenes adjuntas) de forma coherente con la iluminación y perspectiva de la escena.
-    `;
+    const finalPrompt = `${gemini3Prompt}`;
 
     // Build the contents array
     const parts: any[] = [];
@@ -270,4 +269,64 @@ export async function editAdImage(base64ImageData: string, mimeType: string, edi
         console.error("Error editando la imagen:", error);
         throw error;
     }
+}
+
+
+/**
+ * INTERACTIVE ASSISTANT LOGIC
+ */
+
+const updateFormFunction: FunctionDeclaration = {
+    name: 'update_form_fields',
+    description: 'Updates the campaign form fields based on the user conversation. Call this whenever the user confirms or provides clear information for a field.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        objective: {
+          type: Type.STRING,
+          description: 'The primary objective (e.g., Aumentar ventas, Generar leads)',
+        },
+        audienceAction: {
+          type: Type.STRING,
+          description: 'What the audience should think or do.',
+        },
+        keyMessage: {
+          type: Type.STRING,
+          description: 'The main message or tagline.',
+        },
+        context: {
+          type: Type.STRING,
+          description: 'Additional product context or background info.',
+        },
+      },
+    },
+};
+  
+export function createInteractiveChat(): Chat {
+    const ai = getAI();
+    
+    return ai.chats.create({
+        model: textModel,
+        config: {
+            systemInstruction: `
+            Eres un experto en Marketing y Publicidad. Tu trabajo es ayudar al usuario a definir su campaña publicitaria a través de una conversación natural y fluida.
+            
+            Tu objetivo final es rellenar 4 campos:
+            1. Objetivo (objective): Aumentar ventas, leads, reconocimiento, etc.
+            2. Acción de la audiencia (audienceAction): Qué deben pensar o hacer.
+            3. Mensaje clave (keyMessage): El slogan o idea fuerza.
+            4. Contexto (context): Detalles del producto, servicio o marca.
+            
+            REGLAS DE ORO:
+            - NO ASUMAS NADA. Haz preguntas para obtener la información.
+            - Sugiere ideas brillantes si el usuario duda, pero siempre pide confirmación.
+            - Sé breve y conciso. Ve paso a paso.
+            - Usa la herramienta 'update_form_fields' en cuanto tengas información clara para actualizar el formulario del usuario en tiempo real.
+            - Al finalizar, cuando creas que todo está listo, recuérdale al usuario que debe cerrar este chat y que NO OLVIDE subir sus ASSETS (imágenes, logos) en el formulario principal, ya que tú no puedes hacerlo por aquí.
+            
+            Empieza saludando amablemente y preguntando qué vamos a vender o promocionar hoy.
+            `,
+            tools: [{ functionDeclarations: [updateFormFunction] }],
+        },
+    });
 }

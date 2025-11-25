@@ -1,6 +1,8 @@
+
 import React, { useRef, useState } from 'react';
 import Spinner from './Spinner';
 import Icon from './Icon';
+import InteractiveAssistant from './InteractiveAssistant';
 import type { Asset } from '../types';
 
 interface CampaignInputProps {
@@ -55,6 +57,7 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [showInteractiveMode, setShowInteractiveMode] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,6 +154,22 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
       Array.from(e.dataTransfer.files).forEach(processAssetFile);
     }
   };
+  
+  const handleAssistantUpdate = (fields: {
+      objective?: string;
+      audienceAction?: string;
+      keyMessage?: string;
+      context?: string;
+  }) => {
+      if (fields.objective) setObjective(fields.objective);
+      if (fields.audienceAction) setAudienceAction(fields.audienceAction);
+      if (fields.keyMessage) setKeyMessage(fields.keyMessage);
+      if (fields.context) {
+          // Append context instead of replacing if there's already something, or just replace if it's new
+          const newContext = context ? `${context}\n${fields.context}` : fields.context;
+          setContext(newContext);
+      }
+  };
 
   const selectClassName = "w-full bg-slate-900/80 border border-slate-600 rounded-lg p-3 text-slate-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-200";
   const labelClassName = "block text-lg font-medium text-slate-200 mb-2";
@@ -159,7 +178,29 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
 
   return (
     <div className="w-full max-w-3xl mx-auto">
-      <form onSubmit={handleSubmit} className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6 md:p-8 shadow-2xl shadow-slate-950/50 space-y-6">
+      {/* Interactive Mode Modal */}
+      {showInteractiveMode && (
+          <InteractiveAssistant 
+            onClose={() => setShowInteractiveMode(false)}
+            onUpdateFields={handleAssistantUpdate}
+          />
+      )}
+
+      <form onSubmit={handleSubmit} className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6 md:p-8 shadow-2xl shadow-slate-950/50 space-y-6 relative">
+        
+        {/* Interactive Mode Banner */}
+        <div className="absolute top-0 right-0 p-6 md:p-8">
+             <button
+                type="button"
+                onClick={() => setShowInteractiveMode(true)}
+                disabled={isLoading}
+                className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-sm font-semibold py-2 px-4 rounded-full shadow-lg transition-all transform hover:scale-105 disabled:opacity-50 disabled:scale-100"
+             >
+                <Icon name="sparkles" className="w-4 h-4" />
+                Modo Interactivo
+             </button>
+        </div>
+
         <div>
             <label htmlFor="campaign-objective" className={labelClassName}>
               1. ¿Cuál es el objetivo principal de la campaña?

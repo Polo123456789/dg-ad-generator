@@ -216,19 +216,15 @@ const App: React.FC = () => {
         imagePrompt: tc.gemini3Prompt, // STORE THE FULL GEMINI 3 PROMPT HERE
         images: [],
         currentImageIndex: 0,
-        isGenerating: false,
+        isGenerating: true, // Start as true for parallel generation
         aspectRatio: aspectRatio,
         imageSize: imageSize,
       }));
       setAdCreatives(initialCreatives);
       setIsGeneratingInitial(false);
 
-      // 4. Genera las imágenes finales con Gemini 3 Pro usando el prompt maestro.
-      for (const creative of initialCreatives) {
-        setAdCreatives(prev =>
-            prev!.map(c => c.id === creative.id ? { ...c, isGenerating: true } : c)
-        );
-
+      // 4. Genera las imágenes finales con Gemini 3 Pro usando el prompt maestro en PARALELO (Batch).
+      await Promise.all(initialCreatives.map(async (creative) => {
         try {
             const imageUrl = await generateAdImage(
               creative.imagePrompt, // Contains the full instructions (Text + Visual + Layout)
@@ -236,19 +232,30 @@ const App: React.FC = () => {
               creative.imageSize,
               assets // Gemini 3 receives the actual binary assets
             );
+            
             setAdCreatives(prev =>
-                prev!.map(c => c.id === creative.id ? { ...c, images: [{ url: imageUrl, aspectRatio: creative.aspectRatio }], currentImageIndex: 0, isGenerating: false } : c)
+                prev ? prev.map(c => c.id === creative.id ? { 
+                    ...c, 
+                    images: [{ url: imageUrl, aspectRatio: creative.aspectRatio }], 
+                    currentImageIndex: 0, 
+                    isGenerating: false 
+                } : c) : null
             );
             setTotalCost(prevCost => prevCost + 0.14);
         } catch (e) {
             console.error(`Failed to generate image for creative ${creative.id}:`, e);
-            setError(formatError(e));
+            
+            setError(prev => {
+                const msg = `Error en '${creative.title}': ${formatError(e)}`;
+                return prev ? `${prev}\n${msg}` : msg;
+            });
+
             setAdCreatives(prev =>
-                prev!.map(c => c.id === creative.id ? { ...c, isGenerating: false } : c)
+                prev ? prev.map(c => c.id === creative.id ? { ...c, isGenerating: false } : c) : null
             );
-            break; // Stop loop on error
         }
-      }
+      }));
+
     } catch (e) {
       console.error(e);
       setError(formatError(e));

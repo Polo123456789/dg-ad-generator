@@ -109,8 +109,8 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onSetCurr
              <textarea
                 value={promptContent}
                 onChange={(e) => setPromptContent(e.target.value)}
-                rows={6}
-                className="w-full bg-slate-900/50 border border-slate-700 rounded-md p-3 text-xs text-slate-300 font-mono leading-relaxed focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 scrollbar-thin scrollbar-thumb-slate-700"
+                rows={10}
+                className="w-full bg-slate-900/50 border border-slate-700 rounded-md p-3 text-sm text-slate-300 font-mono leading-relaxed focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 scrollbar-thin scrollbar-thumb-slate-700"
                 disabled={creative.isGenerating}
             />
         </div>
