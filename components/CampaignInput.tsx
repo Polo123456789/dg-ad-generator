@@ -1,6 +1,7 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import Spinner from './Spinner';
 import Icon from './Icon';
+import type { Asset } from '../types';
 
 interface CampaignInputProps {
   onSubmit: () => void;
@@ -15,12 +16,16 @@ interface CampaignInputProps {
   setContext: (value: string) => void;
   aspectRatio: string;
   setAspectRatio: (value: string) => void;
+  imageSize: string;
+  setImageSize: (value: string) => void;
   numberOfImages: number;
   setNumberOfImages: (value: number) => void;
   styleGuideContent: string | null;
   setStyleGuideContent: (value: string | null) => void;
   attachStyleGuideDirectly: boolean;
   setAttachStyleGuideDirectly: (value: boolean) => void;
+  assets: Asset[];
+  setAssets: React.Dispatch<React.SetStateAction<Asset[]>>;
 }
 
 const CampaignInput: React.FC<CampaignInputProps> = ({ 
@@ -36,14 +41,20 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
   setContext,
   aspectRatio,
   setAspectRatio,
+  imageSize,
+  setImageSize,
   numberOfImages,
   setNumberOfImages,
   styleGuideContent,
   setStyleGuideContent,
   attachStyleGuideDirectly,
   setAttachStyleGuideDirectly,
+  assets,
+  setAssets,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const assetInputRef = useRef<HTMLInputElement>(null);
+  const [dragActive, setDragActive] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,6 +85,70 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
     setStyleGuideContent(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  // Asset Handling Logic
+  const processAssetFile = (file: File) => {
+    if (!file.type.startsWith('image/')) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      const base64Data = result.split(',')[1];
+      
+      const newAsset: Asset = {
+        id: Date.now().toString() + Math.random().toString(),
+        data: base64Data,
+        mimeType: file.type,
+        name: file.name,
+        previewUrl: result
+      };
+
+      setAssets(prev => [...prev, newAsset]);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleAssetInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      Array.from(e.target.files).forEach(processAssetFile);
+    }
+    // Reset input so same files can be selected again
+    if (assetInputRef.current) assetInputRef.current.value = '';
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) processAssetFile(file);
+      }
+    }
+  };
+
+  const handleRemoveAsset = (id: string) => {
+    setAssets(assets.filter(a => a.id !== id));
+  };
+
+  // Drag and Drop
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      Array.from(e.dataTransfer.files).forEach(processAssetFile);
     }
   };
 
@@ -186,12 +261,73 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
                     Adjuntar guía de estilo directamente al generador de imágenes.
                 </label>
             </div>
-            <p className="text-xs text-slate-500 mt-2 ml-7">Si está activado, la guía se aplica a la imagen final. Si no, influye en la creación de los prompts de imagen.</p>
         </div>
 
-        <div className="pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+            <label htmlFor="assets-upload" className={labelClassName}>
+                6. Assets (Opcional)
+            </label>
+            <p className="text-sm text-slate-400 mb-3">Adjunta logos, imágenes de productos o referencias visuales. Se usarán para generar la imagen final.</p>
+            
+            <div 
+                className={`relative border-2 border-dashed rounded-xl p-8 transition-colors text-center cursor-pointer outline-none focus:ring-2 focus:ring-indigo-500
+                    ${dragActive ? 'border-indigo-500 bg-indigo-500/10' : 'border-slate-600 hover:border-slate-500 hover:bg-slate-800/50'}
+                    ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}
+                `}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+                onPaste={handlePaste}
+                onClick={() => !isLoading && assetInputRef.current?.click()}
+                tabIndex={0} // Makes div focusable for paste events
+            >
+                 <input 
+                    id="assets-upload"
+                    ref={assetInputRef}
+                    type="file" 
+                    accept="image/*"
+                    multiple
+                    onChange={handleAssetInputChange}
+                    className="hidden"
+                    disabled={isLoading}
+                />
+                <div className="flex flex-col items-center justify-center text-slate-400 pointer-events-none">
+                     <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                     </svg>
+                     <p className="font-medium">Haz clic, arrastra archivos o pega imágenes (Ctrl+V)</p>
+                     <p className="text-xs mt-1">Soporta múltiples imágenes (PNG, JPG, WebP)</p>
+                </div>
+            </div>
+
+            {assets.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-4">
+                    {assets.map((asset) => (
+                        <div key={asset.id} className="relative group aspect-square rounded-lg overflow-hidden border border-slate-700 bg-slate-900">
+                            <img src={asset.previewUrl} alt="Asset" className="w-full h-full object-contain" />
+                            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-xs text-white p-1 truncate text-center">
+                                {asset.name}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleRemoveAsset(asset.id); }}
+                                className="absolute top-1 right-1 bg-red-600 hover:bg-red-700 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Eliminar asset"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                </svg>
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+
+        <div className="pt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-                <label htmlFor="aspect-ratio" className="block text-sm font-medium text-slate-300 mb-2">Relación de Aspecto de Imagen</label>
+                <label htmlFor="aspect-ratio" className="block text-sm font-medium text-slate-300 mb-2">Relación de Aspecto</label>
                 <select id="aspect-ratio" value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} disabled={isLoading} className={selectClassName}>
                     <option value="4:3">4:3 (Estándar)</option>
                     <option value="16:9">16:9 (Horizontal)</option>
@@ -201,7 +337,15 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
                 </select>
             </div>
             <div>
-                <label htmlFor="num-images" className="block text-sm font-medium text-slate-300 mb-2">Número de Anuncios a Generar</label>
+                <label htmlFor="image-size" className="block text-sm font-medium text-slate-300 mb-2">Resolución</label>
+                <select id="image-size" value={imageSize} onChange={(e) => setImageSize(e.target.value)} disabled={isLoading} className={selectClassName}>
+                    <option value="1K">1K (Rápido)</option>
+                    <option value="2K">2K (Alta Calidad)</option>
+                    <option value="4K">4K (Ultra HD)</option>
+                </select>
+            </div>
+            <div>
+                <label htmlFor="num-images" className="block text-sm font-medium text-slate-300 mb-2">Cantidad de Anuncios</label>
                 <select id="num-images" value={numberOfImages} onChange={(e) => setNumberOfImages(Number(e.target.value))} disabled={isLoading} className={selectClassName}>
                     {[...Array(10).keys()].map(i => i + 1).map(num => <option key={num} value={num}>{num}</option>)}
                 </select>
@@ -221,7 +365,7 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
           ) : (
              <>
               <Icon name="sparkles" className="w-5 h-5" />
-              <span>Generar Anuncios Para Editar</span>
+              <span>Generar Anuncios Completos</span>
             </>
           )}
         </button>

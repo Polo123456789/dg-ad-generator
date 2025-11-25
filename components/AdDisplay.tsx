@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback } from 'react';
 import type { AdCreative } from '../types';
 import Spinner from './Spinner';
@@ -5,9 +6,9 @@ import Icon from './Icon';
 
 interface AdDisplayProps {
   creative: AdCreative;
-  onRegenerate: (id: string, newTitle: string, newSubtitle: string, newAspectRatio: string) => void;
+  onRegenerate: (id: string, newPrompt: string, newAspectRatio: string, newImageSize: string) => void;
   onSetCurrentImageIndex: (id: string, index: number) => void;
-  onEdit: (id: string, editPrompt: string) => void;
+  onEdit: (id: string, editPrompt: string, imageSize: string) => void;
 }
 
 const getAspectRatioClass = (ratio: string) => {
@@ -23,28 +24,27 @@ const getAspectRatioClass = (ratio: string) => {
 };
 
 const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onSetCurrentImageIndex, onEdit }) => {
-  const [title, setTitle] = useState(creative.title);
-  const [subtitle, setSubtitle] = useState(creative.subtitle);
+  // We use the 'imagePrompt' field to store the full Gemini 3 prompt now.
+  // The 'title' and 'subtitle' fields in props are just metadata/rationale.
+  const [promptContent, setPromptContent] = useState(creative.imagePrompt);
   const [aspectRatio, setAspectRatio] = useState(creative.aspectRatio);
+  const [imageSize, setImageSize] = useState(creative.imageSize || '1K');
   const [editPrompt, setEditPrompt] = useState('');
 
   const handleRegenerateClick = useCallback(() => {
-    onRegenerate(creative.id, title, subtitle, aspectRatio);
-  }, [onRegenerate, creative.id, title, subtitle, aspectRatio]);
+    onRegenerate(creative.id, promptContent, aspectRatio, imageSize);
+  }, [onRegenerate, creative.id, promptContent, aspectRatio, imageSize]);
 
   const handleEditClick = useCallback(() => {
     if (editPrompt.trim()) {
-        onEdit(creative.id, editPrompt);
+        onEdit(creative.id, editPrompt, imageSize);
         setEditPrompt(''); // Clear prompt after submitting
     }
-  }, [onEdit, creative.id, editPrompt]);
+  }, [onEdit, creative.id, editPrompt, imageSize]);
   
-  const fullPrompt = `Crea una imagen publicitaria fotorrealista y visualmente impactante para el concepto: "${creative.imagePrompt}". La imagen debe incluir de forma destacada y legible el texto del título: "${title}". También debe integrar de forma elegante el subtítulo: "${subtitle}". Es CRÍTICO que ambos textos sean perfectamente legibles. Para asegurar la legibilidad, utiliza un color de fuente que genere un alto contraste con los colores de fondo de la imagen. Si es necesario, aplica un sutil contorno o sombra al texto para que destaque sobre fondos complejos. El diseño debe ser profesional, con una composición y una iluminación excelentes, asegurando que el texto complemente la imagen.`;
-
   const currentImage = creative.images[creative.currentImageIndex];
   const currentImageUrl = currentImage?.url;
   const currentImageAspectRatio = currentImage?.aspectRatio || creative.aspectRatio;
-
 
   const handlePrev = () => {
     if (creative.currentImageIndex > 0) {
@@ -60,19 +60,29 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onSetCurr
 
   const buttonClass = "bg-slate-800/80 hover:bg-slate-700/80 disabled:bg-slate-900/80 disabled:text-slate-500 disabled:cursor-not-allowed text-white p-2 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500";
 
-
   return (
     <div className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-indigo-500/20 hover:border-slate-600 flex flex-col">
+      {/* Concept Header */}
+      <div className="px-5 py-3 border-b border-slate-700 bg-slate-900/50 flex justify-between items-center">
+          <div>
+            <h3 className="text-slate-200 font-bold text-lg">{creative.title}</h3>
+            <p className="text-slate-400 text-xs">{creative.subtitle}</p>
+          </div>
+      </div>
+
+      {/* Image Container */}
       <div className={`relative bg-slate-900 flex items-center justify-center ${getAspectRatioClass(currentImageAspectRatio)}`}>
         {creative.isGenerating && (
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center z-10">
             <Spinner className="w-12 h-12" />
-            <p className="text-slate-300 mt-2">Generando Imagen...</p>
+            <p className="text-slate-300 mt-2">Renderizando Diseño Completo...</p>
           </div>
         )}
         {currentImageUrl && (
-          <img src={currentImageUrl} alt={title} className="w-full h-full object-cover" />
+          <img src={currentImageUrl} alt={creative.title} className="w-full h-full object-contain" />
         )}
+        
+        {/* Navigation */}
         {creative.images.length > 1 && !creative.isGenerating && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/50 backdrop-blur-sm p-1.5 rounded-full shadow-lg">
               <button onClick={handlePrev} disabled={creative.currentImageIndex === 0} className={buttonClass} aria-label="Imagen anterior">
@@ -89,69 +99,76 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onSetCurr
           </div>
         )}
       </div>
-      <div className="p-5 flex-grow flex flex-col">
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="w-full bg-transparent text-lg font-bold text-slate-100 border-b-2 border-slate-700 focus:border-indigo-500 outline-none transition duration-200 pb-1 mb-2"
-          disabled={creative.isGenerating}
-        />
-        <input
-          type="text"
-          value={subtitle}
-          onChange={(e) => setSubtitle(e.target.value)}
-          className="w-full bg-transparent text-sm text-slate-400 border-b border-slate-700 focus:border-indigo-500 outline-none transition duration-200 pb-1 mb-4"
-          disabled={creative.isGenerating}
-        />
-        <div className="flex-grow"></div>
-        <details className="group">
-          <summary className="list-none cursor-pointer flex items-center gap-1 text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors">
-            <span>Ver Prompt de Imagen</span>
-            <svg className="w-4 h-4 transition-transform duration-200 group-open:rotate-90" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
-          </summary>
-          <p className="mt-2 text-xs bg-slate-900/50 p-3 rounded-md border border-slate-700 text-slate-400 select-all">
-            {fullPrompt}
-          </p>
-        </details>
-        <div className="mt-4 space-y-3">
+
+      {/* Controls */}
+      <div className="p-5 flex-grow flex flex-col space-y-4">
+        
+        {/* Prompt Editor */}
+        <div>
+             <label className="block text-xs font-medium text-slate-400 mb-1">Prompt Maestro (Instrucciones de Diseño):</label>
+             <textarea
+                value={promptContent}
+                onChange={(e) => setPromptContent(e.target.value)}
+                rows={6}
+                className="w-full bg-slate-900/50 border border-slate-700 rounded-md p-3 text-xs text-slate-300 font-mono leading-relaxed focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 scrollbar-thin scrollbar-thumb-slate-700"
+                disabled={creative.isGenerating}
+            />
+        </div>
+
+        {/* Regeneration Controls */}
+        <div className="grid grid-cols-2 gap-2">
             <div>
-                <label htmlFor={`aspect-ratio-${creative.id}`} className="block text-xs font-medium text-slate-400 mb-1">Regenerar con otra relación de aspecto:</label>
+                <label htmlFor={`aspect-ratio-${creative.id}`} className="block text-xs font-medium text-slate-400 mb-1">Ratio:</label>
                 <select 
-                  id={`aspect-ratio-${creative.id}`}
-                  value={aspectRatio} 
-                  onChange={(e) => setAspectRatio(e.target.value)} 
-                  disabled={creative.isGenerating} 
-                  className="w-full bg-slate-700 text-slate-200 text-sm font-medium py-2 px-3 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors duration-200 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    id={`aspect-ratio-${creative.id}`}
+                    value={aspectRatio} 
+                    onChange={(e) => setAspectRatio(e.target.value)} 
+                    disabled={creative.isGenerating} 
+                    className="w-full bg-slate-700 text-slate-200 text-sm font-medium py-2 px-3 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors"
                 >
-                  <option value="4:3">4:3 (Estándar)</option>
-                  <option value="16:9">16:9 (Horizontal)</option>
-                  <option value="1:1">1:1 (Cuadrado)</option>
-                  <option value="9:16">9:16 (Retrato)</option>
-                  <option value="3:4">3:4 (Vertical)</option>
+                    <option value="4:3">4:3</option>
+                    <option value="16:9">16:9</option>
+                    <option value="1:1">1:1</option>
+                    <option value="9:16">9:16</option>
+                    <option value="3:4">3:4</option>
                 </select>
             </div>
-            <button
-              onClick={handleRegenerateClick}
-              disabled={creative.isGenerating}
-              className="w-full flex items-center justify-center gap-2 bg-slate-700 text-slate-200 font-medium py-2 px-4 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors duration-200"
-            >
-              <Icon name="regenerate" className="w-5 h-5"/>
-              Regenerar Imagen
-            </button>
-        </div>
-        <div className="mt-4 pt-4 border-t border-slate-700 space-y-3">
             <div>
-                <label htmlFor={`edit-prompt-${creative.id}`} className="block text-xs font-medium text-slate-400 mb-1">Edición Rápida de Imagen:</label>
+                <label htmlFor={`image-size-${creative.id}`} className="block text-xs font-medium text-slate-400 mb-1">Resolución:</label>
+                <select 
+                    id={`image-size-${creative.id}`}
+                    value={imageSize} 
+                    onChange={(e) => setImageSize(e.target.value)} 
+                    disabled={creative.isGenerating} 
+                    className="w-full bg-slate-700 text-slate-200 text-sm font-medium py-2 px-3 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors"
+                >
+                    <option value="1K">1K</option>
+                    <option value="2K">2K</option>
+                    <option value="4K">4K</option>
+                </select>
+            </div>
+        </div>
+
+        <button
+            onClick={handleRegenerateClick}
+            disabled={creative.isGenerating}
+            className="w-full flex items-center justify-center gap-2 bg-slate-700 text-slate-200 font-medium py-2 px-4 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors duration-200"
+        >
+            <Icon name="regenerate" className="w-5 h-5"/>
+            Regenerar Diseño Completo
+        </button>
+
+        {/* Edit Section */}
+        <div className="pt-4 border-t border-slate-700 space-y-3">
+            <div>
+                <label htmlFor={`edit-prompt-${creative.id}`} className="block text-xs font-medium text-slate-400 mb-1">Edición Rápida (Ej: Cambiar color de texto, mover logo):</label>
                 <textarea
                     id={`edit-prompt-${creative.id}`}
                     rows={2}
                     value={editPrompt}
                     onChange={(e) => setEditPrompt(e.target.value)}
-                    className="w-full bg-slate-700 text-slate-200 text-sm p-2 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors duration-200 focus:ring-2 focus:ring-indigo-500 focus:outline-none placeholder:text-slate-400"
-                    placeholder="Ej: añade un collar al perro, haz el cielo más azul..."
+                    className="w-full bg-slate-700 text-slate-200 text-sm p-2 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors focus:ring-1 focus:ring-indigo-500 outline-none placeholder:text-slate-500"
+                    placeholder="Ej: Haz que el texto 'Oferta' sea de color rojo..."
                     disabled={creative.isGenerating}
                 />
             </div>
@@ -161,7 +178,7 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onSetCurr
                 className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-medium py-2 px-4 rounded-md hover:bg-indigo-700 disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors duration-200"
             >
                 <Icon name="sparkles" className="w-5 h-5"/>
-                Editar Imagen
+                Aplicar Cambios
             </button>
         </div>
       </div>

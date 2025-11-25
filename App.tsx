@@ -1,8 +1,10 @@
+
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import type { AdCreative, AdCreativeText } from './types';
+import type { AdCreative, AdCreativeText, Asset } from './types';
 import { generateAdCreatives, generateAdImage, summarizeUrlContent, editAdImage } from './services/geminiService';
 import CampaignInput from './components/CampaignInput';
 import AdDisplay from './components/AdDisplay';
+import Spinner from './components/Spinner';
 
 const LOCAL_STORAGE_KEY = 'adCampaignSession';
 
@@ -34,11 +36,46 @@ const App: React.FC = () => {
   const [keyMessage, setKeyMessage] = useState('');
   const [context, setContext] = useState('');
   const [aspectRatio, setAspectRatio] = useState('3:4');
+  const [imageSize, setImageSize] = useState('1K');
   const [numberOfImages, setNumberOfImages] = useState(3);
   const [styleGuideContent, setStyleGuideContent] = useState<string | null>(null);
   const [attachStyleGuideDirectly, setAttachStyleGuideDirectly] = useState<boolean>(false);
+  const [assets, setAssets] = useState<Asset[]>([]);
   
   const importInputRef = useRef<HTMLInputElement>(null);
+
+  // API Key Selection State
+  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
+  const [checkingKey, setCheckingKey] = useState<boolean>(true);
+
+  useEffect(() => {
+    const checkKey = async () => {
+      if (window.aistudio) {
+        const has = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(has);
+      } else {
+        // Fallback or dev environment
+        setHasApiKey(true);
+      }
+      setCheckingKey(false);
+    };
+    checkKey();
+  }, []);
+
+  const handleConnect = async () => {
+    if (window.aistudio) {
+        try {
+            await window.aistudio.openSelectKey();
+            // Assume success to prevent race condition
+            setHasApiKey(true);
+        } catch (e) {
+            console.error(e);
+            if (String(e).includes("Requested entity was not found")) {
+                setHasApiKey(false);
+            }
+        }
+    }
+  };
 
   // Memoize form state for useEffect dependency to prevent unnecessary re-saves
   const formState = useMemo(() => ({
@@ -47,18 +84,22 @@ const App: React.FC = () => {
     keyMessage,
     context,
     aspectRatio,
+    imageSize,
     numberOfImages,
     styleGuideContent,
     attachStyleGuideDirectly,
+    assets
   }), [
     objective,
     audienceAction,
     keyMessage,
     context,
     aspectRatio,
+    imageSize,
     numberOfImages,
     styleGuideContent,
-    attachStyleGuideDirectly
+    attachStyleGuideDirectly,
+    assets
   ]);
 
   // Effect to load session from localStorage on initial component mount
@@ -79,9 +120,11 @@ const App: React.FC = () => {
                     keyMessage,
                     context,
                     aspectRatio,
+                    imageSize,
                     numberOfImages,
                     styleGuideContent,
                     attachStyleGuideDirectly,
+                    assets
                 } = data.formState;
 
                 setObjective(objective);
@@ -89,9 +132,11 @@ const App: React.FC = () => {
                 setKeyMessage(keyMessage);
                 setContext(context);
                 setAspectRatio(aspectRatio);
+                setImageSize(imageSize || '1K');
                 setNumberOfImages(numberOfImages);
                 setStyleGuideContent(styleGuideContent || null);
                 setAttachStyleGuideDirectly(attachStyleGuideDirectly);
+                setAssets(assets || []);
             } else {
                  localStorage.removeItem(LOCAL_STORAGE_KEY);
             }
@@ -111,7 +156,11 @@ const App: React.FC = () => {
             urlSummaryForDisplay,
             formState,
         };
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sessionData));
+        try {
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sessionData));
+        } catch (e) {
+            console.warn("Could not save session to localStorage (likely quota exceeded due to images):", e);
+        }
     }
   }, [adCreatives, totalCost, urlSummaryForDisplay, formState]);
 
@@ -151,25 +200,30 @@ const App: React.FC = () => {
           campaignBrief += `\n- PUNTOS CLAVE EXTRAÍDOS DEL CONTENIDO DE LAS URLs: ${urlSummary}.`;
       }
 
-      // 3. Genera los textos de los anuncios con el brief enriquecido.
+      // 3. Genera el PLAN del anuncio (Prompt Maestro) usando Flash.
+      // Le pasamos los assets para que Flash sepa qué imágenes existen y cómo orquestarlas.
       const textCreatives: AdCreativeText[] = await generateAdCreatives(
         campaignBrief, 
         numberOfImages,
-        !attachStyleGuideDirectly ? styleGuideContent : null
+        styleGuideContent, // Always pass style guide to Flash creator
+        assets 
       );
       
       const initialCreatives: AdCreative[] = textCreatives.map((tc, index) => ({
-        ...tc,
         id: `${Date.now()}-${index}`,
+        title: tc.title,
+        subtitle: tc.subtitle || tc.rationale, // Use subtitle or rationale for the UI header
+        imagePrompt: tc.gemini3Prompt, // STORE THE FULL GEMINI 3 PROMPT HERE
         images: [],
         currentImageIndex: 0,
         isGenerating: false,
         aspectRatio: aspectRatio,
+        imageSize: imageSize,
       }));
       setAdCreatives(initialCreatives);
       setIsGeneratingInitial(false);
 
-      // 4. Genera las imágenes para cada anuncio secuencialmente.
+      // 4. Genera las imágenes finales con Gemini 3 Pro usando el prompt maestro.
       for (const creative of initialCreatives) {
         setAdCreatives(prev =>
             prev!.map(c => c.id === creative.id ? { ...c, isGenerating: true } : c)
@@ -177,23 +231,22 @@ const App: React.FC = () => {
 
         try {
             const imageUrl = await generateAdImage(
-              creative.title, 
-              creative.subtitle, 
-              creative.imagePrompt, 
+              creative.imagePrompt, // Contains the full instructions (Text + Visual + Layout)
               creative.aspectRatio,
-              attachStyleGuideDirectly ? styleGuideContent : null
+              creative.imageSize,
+              assets // Gemini 3 receives the actual binary assets
             );
             setAdCreatives(prev =>
                 prev!.map(c => c.id === creative.id ? { ...c, images: [{ url: imageUrl, aspectRatio: creative.aspectRatio }], currentImageIndex: 0, isGenerating: false } : c)
             );
-            setTotalCost(prevCost => prevCost + 0.04);
+            setTotalCost(prevCost => prevCost + 0.14);
         } catch (e) {
             console.error(`Failed to generate image for creative ${creative.id}:`, e);
             setError(formatError(e));
             setAdCreatives(prev =>
                 prev!.map(c => c.id === creative.id ? { ...c, isGenerating: false } : c)
             );
-            break;
+            break; // Stop loop on error
         }
       }
     } catch (e) {
@@ -201,31 +254,31 @@ const App: React.FC = () => {
       setError(formatError(e));
       setIsGeneratingInitial(false);
     }
-  }, [objective, audienceAction, keyMessage, context, numberOfImages, aspectRatio, styleGuideContent, attachStyleGuideDirectly]);
+  }, [objective, audienceAction, keyMessage, context, numberOfImages, aspectRatio, imageSize, styleGuideContent, attachStyleGuideDirectly, assets]);
 
 
-  const handleRegenerateImage = useCallback(async (id: string, newTitle: string, newSubtitle: string, newAspectRatio: string) => {
+  const handleRegenerateImage = useCallback(async (id: string, newPrompt: string, newAspectRatio: string, newImageSize: string) => {
+    // Note: newPrompt here is the full Gemini 3 prompt edited by user
     const targetCreative = adCreatives?.find(c => c.id === id);
     if (!targetCreative) return;
     
     setError(null);
 
     setAdCreatives(prev => 
-      prev!.map(c => c.id === id ? { ...c, isGenerating: true, title: newTitle, subtitle: newSubtitle, aspectRatio: newAspectRatio } : c)
+      prev!.map(c => c.id === id ? { ...c, isGenerating: true, imagePrompt: newPrompt, aspectRatio: newAspectRatio, imageSize: newImageSize } : c)
     );
 
     try {
       const newImageUrl = await generateAdImage(
-        newTitle, 
-        newSubtitle, 
-        targetCreative.imagePrompt, 
+        newPrompt,
         newAspectRatio,
-        attachStyleGuideDirectly ? styleGuideContent : null
+        newImageSize,
+        assets // Use assets for regeneration too
       );
       setAdCreatives(prev =>
         prev!.map(c => c.id === id ? { ...c, images: [...c.images, { url: newImageUrl, aspectRatio: newAspectRatio }], currentImageIndex: c.images.length, isGenerating: false } : c)
       );
-      setTotalCost(prevCost => prevCost + 0.04); // Increment cost on regeneration
+      setTotalCost(prevCost => prevCost + 0.14);
     } catch (e) {
       console.error(`Failed to regenerate image for creative ${id}:`, e);
       setError(formatError(e));
@@ -233,9 +286,9 @@ const App: React.FC = () => {
         prev!.map(c => c.id === id ? { ...c, isGenerating: false } : c)
       );
     }
-  }, [adCreatives, attachStyleGuideDirectly, styleGuideContent]);
+  }, [adCreatives, assets]);
 
-  const handleEditImage = useCallback(async (id: string, editPrompt: string) => {
+  const handleEditImage = useCallback(async (id: string, editPrompt: string, imageSize: string) => {
     const targetCreative = adCreatives?.find(c => c.id === id);
     if (!targetCreative || targetCreative.images.length === 0) return;
 
@@ -258,11 +311,11 @@ const App: React.FC = () => {
     );
 
     try {
-        const newImageUrl = await editAdImage(base64ImageData, mimeType, editPrompt);
+        const newImageUrl = await editAdImage(base64ImageData, mimeType, editPrompt, imageSize);
         setAdCreatives(prev =>
-            prev!.map(c => c.id === id ? { ...c, images: [...c.images, { url: newImageUrl, aspectRatio: c.aspectRatio }], currentImageIndex: c.images.length, isGenerating: false } : c)
+            prev!.map(c => c.id === id ? { ...c, images: [...c.images, { url: newImageUrl, aspectRatio: c.aspectRatio }], currentImageIndex: c.images.length, isGenerating: false, imageSize: imageSize } : c)
         );
-        // setTotalCost(prevCost => prevCost + 0.01); // Optional: add cost for editing
+        // setTotalCost(prevCost => prevCost + 0.14); // Editing might cost differently, keeping silent for now or same price
     } catch (e) {
         console.error(`Failed to edit image for creative ${id}:`, e);
         setError(formatError(e));
@@ -290,7 +343,6 @@ const App: React.FC = () => {
     setError(null);
     setIsGeneratingInitial(false);
     setUrlSummaryForDisplay(null);
-    // Do not reset form state or totalCost
   };
   
   const handleClearSession = () => {
@@ -307,9 +359,11 @@ const App: React.FC = () => {
     setKeyMessage('');
     setContext('');
     setAspectRatio('3:4');
+    setImageSize('1K');
     setNumberOfImages(3);
     setStyleGuideContent(null);
     setAttachStyleGuideDirectly(false);
+    setAssets([]);
   };
 
   const handleExport = useCallback(() => {
@@ -325,9 +379,11 @@ const App: React.FC = () => {
             keyMessage,
             context,
             aspectRatio,
+            imageSize,
             numberOfImages,
             styleGuideContent,
             attachStyleGuideDirectly,
+            assets
         }
     };
 
@@ -341,7 +397,7 @@ const App: React.FC = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [adCreatives, totalCost, urlSummaryForDisplay, objective, audienceAction, keyMessage, context, aspectRatio, numberOfImages, styleGuideContent, attachStyleGuideDirectly]);
+  }, [adCreatives, totalCost, urlSummaryForDisplay, objective, audienceAction, keyMessage, context, aspectRatio, imageSize, numberOfImages, styleGuideContent, attachStyleGuideDirectly, assets]);
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -369,9 +425,11 @@ const App: React.FC = () => {
                 keyMessage,
                 context,
                 aspectRatio,
+                imageSize,
                 numberOfImages,
                 styleGuideContent,
                 attachStyleGuideDirectly,
+                assets
             } = data.formState;
 
             setObjective(objective);
@@ -379,9 +437,11 @@ const App: React.FC = () => {
             setKeyMessage(keyMessage);
             setContext(context);
             setAspectRatio(aspectRatio);
+            setImageSize(imageSize || '1K');
             setNumberOfImages(numberOfImages);
             setStyleGuideContent(styleGuideContent || null);
             setAttachStyleGuideDirectly(attachStyleGuideDirectly);
+            setAssets(assets || []);
 
             setError(null);
             setIsGeneratingInitial(false);
@@ -405,13 +465,45 @@ const App: React.FC = () => {
     reader.readAsText(file);
   };
 
+  if (checkingKey) {
+    return (
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+            <Spinner className="w-10 h-10" />
+        </div>
+    );
+  }
+
+  if (!hasApiKey) {
+    return (
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 text-center">
+             <div className="max-w-md space-y-6 bg-slate-800/50 p-8 rounded-2xl border border-slate-700 shadow-xl backdrop-blur-sm">
+                <div className="flex justify-center mb-4">
+                    <img src="https://dhgf5mcbrms62.cloudfront.net/29462425/header-fcHJMd/DVnsPlP-200x200.webp" alt="Logo" className="h-16 w-16 rounded-xl" />
+                </div>
+                <h1 className="text-2xl font-bold text-white">Configuración Requerida</h1>
+                <p className="text-slate-300">
+                    Para utilizar el modelo <strong>Gemini 3 Pro Image Preview</strong>, es necesario seleccionar un proyecto de Google Cloud con facturación habilitada.
+                </p>
+                <button 
+                    onClick={handleConnect}
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-[1.02]"
+                >
+                    Conectar Cuenta de Google
+                </button>
+                 <p className="text-xs text-slate-500 mt-4">
+                    Al continuar, aceptas los términos de uso. Consulta la <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">documentación de facturación</a> para más detalles sobre los costos de la API.
+                </p>
+             </div>
+        </div>
+    );
+  }
 
   return (
     <div className="min-h-screen text-slate-200 p-4 sm:p-6 md:p-8 flex flex-col">
       <header className="w-full max-w-7xl mx-auto flex justify-between items-center mb-8 flex-wrap gap-4">
         <div className="flex items-center gap-4">
             <img src="https://dhgf5mcbrms62.cloudfront.net/29462425/header-fcHJMd/DVnsPlP-200x200.webp" alt="Logo de la aplicación" className="h-12 w-auto rounded-lg" />
-            <h1 className="text-2xl md:text-3xl font-bold text-slate-100">Generador de Anuncios</h1>
+            <h1 className="text-2xl md:text-3xl font-bold text-slate-100">Generador de Anuncios <span className="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded-full align-middle ml-2">PRO</span></h1>
         </div>
         <div className="flex items-center gap-2 sm:gap-4">
             <div className="text-right">
@@ -466,12 +558,16 @@ const App: React.FC = () => {
             setContext={setContext}
             aspectRatio={aspectRatio}
             setAspectRatio={setAspectRatio}
+            imageSize={imageSize}
+            setImageSize={setImageSize}
             numberOfImages={numberOfImages}
             setNumberOfImages={setNumberOfImages}
             styleGuideContent={styleGuideContent}
             setStyleGuideContent={setStyleGuideContent}
             attachStyleGuideDirectly={attachStyleGuideDirectly}
             setAttachStyleGuideDirectly={setAttachStyleGuideDirectly}
+            assets={assets}
+            setAssets={setAssets}
             />
         ) : (
           <div className="w-full max-w-3xl mx-auto grid grid-cols-1 gap-8">
