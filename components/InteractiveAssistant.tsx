@@ -91,6 +91,8 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
 
                 // Send tool execution result back to Gemini
                 if (functionResponses.length > 0) {
+                     // IMPORTANT: When sending function responses, we send the parts array directly
+                     // or wrapped in the message property correctly as Part[].
                      response = await chatSessionRef.current.sendMessage({
                          message: functionResponses.map(fr => ({ functionResponse: fr })) 
                      });

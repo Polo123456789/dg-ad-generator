@@ -16,8 +16,8 @@ interface CampaignInputProps {
   setKeyMessage: (value: string) => void;
   context: string;
   setContext: (value: string) => void;
-  aspectRatio: string;
-  setAspectRatio: (value: string) => void;
+  aspectRatios: string[];
+  setAspectRatios: (value: string[]) => void;
   imageSize: string;
   setImageSize: (value: string) => void;
   numberOfImages: number;
@@ -41,8 +41,8 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
   setKeyMessage,
   context,
   setContext,
-  aspectRatio,
-  setAspectRatio,
+  aspectRatios,
+  setAspectRatios,
   imageSize,
   setImageSize,
   numberOfImages,
@@ -61,7 +61,7 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (audienceAction.trim() && keyMessage.trim() && !isLoading) {
+    if (audienceAction.trim() && keyMessage.trim() && !isLoading && aspectRatios.length > 0) {
       onSubmit();
     }
   };
@@ -135,6 +135,17 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
     setAssets(assets.filter(a => a.id !== id));
   };
 
+  const toggleAspectRatio = (ratio: string) => {
+      if (aspectRatios.includes(ratio)) {
+          // Prevent removing the last one
+          if (aspectRatios.length > 1) {
+              setAspectRatios(aspectRatios.filter(r => r !== ratio));
+          }
+      } else {
+          setAspectRatios([...aspectRatios, ratio]);
+      }
+  };
+
   // Drag and Drop
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -165,8 +176,8 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
       if (fields.audienceAction) setAudienceAction(fields.audienceAction);
       if (fields.keyMessage) setKeyMessage(fields.keyMessage);
       if (fields.context) {
-          // Append context instead of replacing if there's already something, or just replace if it's new
-          const newContext = context ? `${context}\n${fields.context}` : fields.context;
+          // Ensure we append to existing context if present, or just set it
+          const newContext = context && context.trim() !== '' ? `${context}\n${fields.context}` : fields.context;
           setContext(newContext);
       }
   };
@@ -366,47 +377,60 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
             )}
         </div>
 
-        <div className="pt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-                <label htmlFor="aspect-ratio" className="block text-sm font-medium text-slate-300 mb-2">Relación de Aspecto</label>
-                <select id="aspect-ratio" value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} disabled={isLoading} className={selectClassName}>
-                    <option value="4:3">4:3 (Estándar)</option>
-                    <option value="16:9">16:9 (Horizontal)</option>
-                    <option value="1:1">1:1 (Cuadrado)</option>
-                    <option value="9:16">9:16 (Retrato)</option>
-                    <option value="3:4">3:4 (Vertical)</option>
-                </select>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+             <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">Relaciones de Aspecto (Formatos)</label>
+                <div className="flex flex-wrap gap-2">
+                    {["9:16", "1:1", "16:9", "4:3", "3:4"].map(ratio => (
+                         <button
+                            key={ratio}
+                            type="button"
+                            onClick={() => toggleAspectRatio(ratio)}
+                            className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors border ${
+                                aspectRatios.includes(ratio)
+                                ? 'bg-indigo-600 border-indigo-500 text-white'
+                                : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500 hover:text-slate-300'
+                            }`}
+                         >
+                            {ratio}
+                         </button>
+                    ))}
+                </div>
+                {aspectRatios.length === 0 && <p className="text-red-500 text-xs mt-1">Selecciona al menos uno.</p>}
             </div>
-            <div>
-                <label htmlFor="image-size" className="block text-sm font-medium text-slate-300 mb-2">Resolución</label>
-                <select id="image-size" value={imageSize} onChange={(e) => setImageSize(e.target.value)} disabled={isLoading} className={selectClassName}>
-                    <option value="1K">1K (Rápido)</option>
-                    <option value="2K">2K (Alta Calidad)</option>
-                    <option value="4K">4K (Ultra HD)</option>
-                </select>
-            </div>
-            <div>
-                <label htmlFor="num-images" className="block text-sm font-medium text-slate-300 mb-2">Cantidad de Anuncios</label>
-                <select id="num-images" value={numberOfImages} onChange={(e) => setNumberOfImages(Number(e.target.value))} disabled={isLoading} className={selectClassName}>
-                    {[...Array(10).keys()].map(i => i + 1).map(num => <option key={num} value={num}>{num}</option>)}
-                </select>
+
+            <div className="grid grid-cols-2 gap-4">
+                <div>
+                    <label htmlFor="image-size" className="block text-sm font-medium text-slate-300 mb-2">Resolución</label>
+                    <select id="image-size" value={imageSize} onChange={(e) => setImageSize(e.target.value)} disabled={isLoading} className={selectClassName}>
+                        <option value="1K">1K (Rápido)</option>
+                        <option value="2K">2K (Alta Calidad)</option>
+                        <option value="4K">4K (Ultra HD)</option>
+                    </select>
+                </div>
+                <div>
+                    <label htmlFor="num-images" className="block text-sm font-medium text-slate-300 mb-2">Cantidad de Conceptos</label>
+                    <select id="num-images" value={numberOfImages} onChange={(e) => setNumberOfImages(Number(e.target.value))} disabled={isLoading} className={selectClassName}>
+                        {[...Array(5).keys()].map(i => i + 1).map(num => <option key={num} value={num}>{num}</option>)}
+                    </select>
+                </div>
             </div>
         </div>
 
         <button
           type="submit"
-          disabled={isLoading || !audienceAction.trim() || !keyMessage.trim()}
+          disabled={isLoading || !audienceAction.trim() || !keyMessage.trim() || aspectRatios.length === 0}
           className="!mt-8 w-full flex items-center justify-center gap-3 bg-indigo-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-indigo-700 disabled:bg-slate-600 disabled:cursor-not-allowed transition-all duration-200 transform hover:scale-105 disabled:scale-100"
         >
           {isLoading ? (
             <>
               <Spinner className="w-5 h-5" />
-              <span>Generando...</span>
+              <span>Generando Variantes...</span>
             </>
           ) : (
              <>
               <Icon name="sparkles" className="w-5 h-5" />
-              <span>Generar Anuncios Completos</span>
+              <span>Generar Anuncios Multiformato</span>
             </>
           )}
         </button>

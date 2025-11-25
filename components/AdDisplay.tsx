@@ -1,14 +1,14 @@
 
-import React, { useState, useCallback } from 'react';
-import type { AdCreative } from '../types';
+import React, { useState, useCallback, useEffect } from 'react';
+import type { AdCreative, AdVariant } from '../types';
 import Spinner from './Spinner';
 import Icon from './Icon';
 
 interface AdDisplayProps {
   creative: AdCreative;
-  onRegenerate: (id: string, newPrompt: string, newAspectRatio: string, newImageSize: string) => void;
-  onSetCurrentImageIndex: (id: string, index: number) => void;
-  onEdit: (id: string, editPrompt: string, imageSize: string) => void;
+  onRegenerate: (id: string, ratio: string, newPrompt: string, newImageSize: string) => void;
+  onEdit: (id: string, ratio: string, editPrompt: string, imageSize: string) => void;
+  onSetActiveVariant: (id: string, ratio: string) => void;
 }
 
 const getAspectRatioClass = (ratio: string) => {
@@ -23,164 +23,157 @@ const getAspectRatioClass = (ratio: string) => {
     }
 };
 
-const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onSetCurrentImageIndex, onEdit }) => {
-  // We use the 'imagePrompt' field to store the full Gemini 3 prompt now.
-  // The 'title' and 'subtitle' fields in props are just metadata/rationale.
-  const [promptContent, setPromptContent] = useState(creative.imagePrompt);
-  const [aspectRatio, setAspectRatio] = useState(creative.aspectRatio);
+const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, onSetActiveVariant }) => {
+  const activeVariantKey = creative.activeVariant;
+  const activeVariant = creative.variants[activeVariantKey];
+
+  const [promptContent, setPromptContent] = useState(activeVariant?.imagePrompt || '');
   const [imageSize, setImageSize] = useState(creative.imageSize || '1K');
   const [editPrompt, setEditPrompt] = useState('');
 
+  // Update local state when active variant changes
+  useEffect(() => {
+      if (activeVariant) {
+          setPromptContent(activeVariant.imagePrompt);
+      }
+  }, [activeVariant]);
+
   const handleRegenerateClick = useCallback(() => {
-    onRegenerate(creative.id, promptContent, aspectRatio, imageSize);
-  }, [onRegenerate, creative.id, promptContent, aspectRatio, imageSize]);
+    onRegenerate(creative.id, activeVariantKey, promptContent, imageSize);
+  }, [onRegenerate, creative.id, activeVariantKey, promptContent, imageSize]);
 
   const handleEditClick = useCallback(() => {
     if (editPrompt.trim()) {
-        onEdit(creative.id, editPrompt, imageSize);
-        setEditPrompt(''); // Clear prompt after submitting
+        onEdit(creative.id, activeVariantKey, editPrompt, imageSize);
+        setEditPrompt('');
     }
-  }, [onEdit, creative.id, editPrompt, imageSize]);
+  }, [onEdit, creative.id, activeVariantKey, editPrompt, imageSize]);
   
-  const currentImage = creative.images[creative.currentImageIndex];
-  const currentImageUrl = currentImage?.url;
-  const currentImageAspectRatio = currentImage?.aspectRatio || creative.aspectRatio;
+  const availableRatios = Object.keys(creative.variants);
 
-  const handlePrev = () => {
-    if (creative.currentImageIndex > 0) {
-      onSetCurrentImageIndex(creative.id, creative.currentImageIndex - 1);
-    }
-  };
+  if (!activeVariant) return null;
 
-  const handleNext = () => {
-    if (creative.currentImageIndex < creative.images.length - 1) {
-      onSetCurrentImageIndex(creative.id, creative.currentImageIndex + 1);
-    }
-  };
-
-  const buttonClass = "bg-slate-800/80 hover:bg-slate-700/80 disabled:bg-slate-900/80 disabled:text-slate-500 disabled:cursor-not-allowed text-white p-2 rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500";
+  const currentImageUrl = activeVariant.image?.url;
 
   return (
-    <div className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-indigo-500/20 hover:border-slate-600 flex flex-col">
-      {/* Concept Header */}
-      <div className="px-5 py-3 border-b border-slate-700 bg-slate-900/50 flex justify-between items-center">
-          <div>
-            <h3 className="text-slate-200 font-bold text-lg">{creative.title}</h3>
-            <p className="text-slate-400 text-xs">{creative.subtitle}</p>
-          </div>
-      </div>
-
-      {/* Image Container */}
-      <div className={`relative bg-slate-900 flex items-center justify-center ${getAspectRatioClass(currentImageAspectRatio)}`}>
-        {creative.isGenerating && (
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm flex flex-col items-center justify-center z-10">
-            <Spinner className="w-12 h-12" />
-            <p className="text-slate-300 mt-2">Renderizando Diseño Completo...</p>
-          </div>
-        )}
-        {currentImageUrl && (
-          <img src={currentImageUrl} alt={creative.title} className="w-full h-full object-contain" />
-        )}
+    <div className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-indigo-500/20 hover:border-slate-600 flex flex-col md:flex-row h-auto min-h-[600px]">
+      
+      {/* Left Column: Image Area */}
+      <div className="md:w-1/2 lg:w-3/5 bg-slate-900 flex flex-col border-b md:border-b-0 md:border-r border-slate-700">
         
-        {/* Navigation */}
-        {creative.images.length > 1 && !creative.isGenerating && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/50 backdrop-blur-sm p-1.5 rounded-full shadow-lg">
-              <button onClick={handlePrev} disabled={creative.currentImageIndex === 0} className={buttonClass} aria-label="Imagen anterior">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
-                  </svg>
-              </button>
-              <span className="text-sm font-semibold text-white tabular-nums px-2">{creative.currentImageIndex + 1} / {creative.images.length}</span>
-              <button onClick={handleNext} disabled={creative.currentImageIndex >= creative.images.length - 1} className={buttonClass} aria-label="Siguiente imagen">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
-                  </svg>
-              </button>
-          </div>
-        )}
-      </div>
-
-      {/* Controls */}
-      <div className="p-5 flex-grow flex flex-col space-y-4">
-        
-        {/* Prompt Editor */}
-        <div>
-             <label className="block text-xs font-medium text-slate-400 mb-1">Prompt Maestro (Instrucciones de Diseño):</label>
-             <textarea
-                value={promptContent}
-                onChange={(e) => setPromptContent(e.target.value)}
-                rows={10}
-                className="w-full bg-slate-900/50 border border-slate-700 rounded-md p-3 text-sm text-slate-300 font-mono leading-relaxed focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 scrollbar-thin scrollbar-thumb-slate-700"
-                disabled={creative.isGenerating}
-            />
+        {/* Tabs for Aspect Ratios */}
+        <div className="flex border-b border-slate-700 bg-slate-900 overflow-x-auto scrollbar-hide">
+            {availableRatios.map(ratio => (
+                <button
+                    key={ratio}
+                    onClick={() => onSetActiveVariant(creative.id, ratio)}
+                    className={`flex-1 py-3 px-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap
+                        ${activeVariantKey === ratio 
+                            ? 'border-indigo-500 text-white bg-slate-800' 
+                            : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
+                >
+                    {ratio}
+                </button>
+            ))}
         </div>
 
-        {/* Regeneration Controls */}
-        <div className="grid grid-cols-2 gap-2">
-            <div>
-                <label htmlFor={`aspect-ratio-${creative.id}`} className="block text-xs font-medium text-slate-400 mb-1">Ratio:</label>
-                <select 
-                    id={`aspect-ratio-${creative.id}`}
-                    value={aspectRatio} 
-                    onChange={(e) => setAspectRatio(e.target.value)} 
-                    disabled={creative.isGenerating} 
-                    className="w-full bg-slate-700 text-slate-200 text-sm font-medium py-2 px-3 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors"
-                >
-                    <option value="4:3">4:3</option>
-                    <option value="16:9">16:9</option>
-                    <option value="1:1">1:1</option>
-                    <option value="9:16">9:16</option>
-                    <option value="3:4">3:4</option>
-                </select>
-            </div>
-            <div>
-                <label htmlFor={`image-size-${creative.id}`} className="block text-xs font-medium text-slate-400 mb-1">Resolución:</label>
-                <select 
-                    id={`image-size-${creative.id}`}
-                    value={imageSize} 
-                    onChange={(e) => setImageSize(e.target.value)} 
-                    disabled={creative.isGenerating} 
-                    className="w-full bg-slate-700 text-slate-200 text-sm font-medium py-2 px-3 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors"
-                >
-                    <option value="1K">1K</option>
-                    <option value="2K">2K</option>
-                    <option value="4K">4K</option>
-                </select>
+        {/* Main Image Viewport */}
+        <div className="flex-grow flex items-center justify-center p-4 md:p-8 relative min-h-[400px]">
+            <div className={`relative w-full max-w-full h-auto shadow-2xl ${getAspectRatioClass(activeVariantKey)}`}>
+                {activeVariant.isGenerating && (
+                <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center z-10 rounded-lg">
+                    <Spinner className="w-10 h-10" />
+                    <p className="text-slate-300 mt-2 text-sm font-medium animate-pulse">Diseñando para {activeVariantKey}...</p>
+                </div>
+                )}
+                {currentImageUrl ? (
+                    <img src={currentImageUrl} alt={creative.title} className="w-full h-full object-contain bg-slate-950 rounded-lg" />
+                ) : (
+                     !activeVariant.isGenerating && (
+                         <div className="w-full h-full bg-slate-800 rounded-lg flex items-center justify-center text-slate-500 text-sm">
+                             Esperando generación...
+                         </div>
+                     )
+                )}
             </div>
         </div>
+      </div>
 
-        <button
-            onClick={handleRegenerateClick}
-            disabled={creative.isGenerating}
-            className="w-full flex items-center justify-center gap-2 bg-slate-700 text-slate-200 font-medium py-2 px-4 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors duration-200"
-        >
-            <Icon name="regenerate" className="w-5 h-5"/>
-            Regenerar Diseño Completo
-        </button>
+      {/* Right Column: Controls */}
+      <div className="md:w-1/2 lg:w-2/5 flex flex-col bg-slate-800/50">
+          <div className="p-6 border-b border-slate-700">
+            <h3 className="text-xl font-bold text-slate-100 mb-1">{creative.title}</h3>
+            <p className="text-slate-400 text-sm">{creative.subtitle}</p>
+          </div>
 
-        {/* Edit Section */}
-        <div className="pt-4 border-t border-slate-700 space-y-3">
+          <div className="p-6 flex-grow flex flex-col space-y-6 overflow-y-auto">
+            
+            {/* Prompt Editor */}
             <div>
-                <label htmlFor={`edit-prompt-${creative.id}`} className="block text-xs font-medium text-slate-400 mb-1">Edición Rápida (Ej: Cambiar color de texto, mover logo):</label>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                    Prompt de Composición ({activeVariantKey})
+                </label>
                 <textarea
-                    id={`edit-prompt-${creative.id}`}
-                    rows={2}
-                    value={editPrompt}
-                    onChange={(e) => setEditPrompt(e.target.value)}
-                    className="w-full bg-slate-700 text-slate-200 text-sm p-2 rounded-md hover:bg-slate-600 disabled:bg-slate-500 disabled:cursor-wait transition-colors focus:ring-1 focus:ring-indigo-500 outline-none placeholder:text-slate-500"
-                    placeholder="Ej: Haz que el texto 'Oferta' sea de color rojo..."
-                    disabled={creative.isGenerating}
+                    value={promptContent}
+                    onChange={(e) => setPromptContent(e.target.value)}
+                    rows={8}
+                    className="w-full bg-slate-900/50 border border-slate-700 rounded-lg p-3 text-sm text-slate-300 font-mono leading-relaxed focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 scrollbar-thin scrollbar-thumb-slate-700 transition-all"
+                    disabled={activeVariant.isGenerating}
                 />
             </div>
-            <button
-                onClick={handleEditClick}
-                disabled={creative.isGenerating || !editPrompt.trim()}
-                className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white font-medium py-2 px-4 rounded-md hover:bg-indigo-700 disabled:bg-slate-600 disabled:cursor-not-allowed transition-colors duration-200"
-            >
-                <Icon name="sparkles" className="w-5 h-5"/>
-                Aplicar Cambios
-            </button>
-        </div>
+
+            {/* Regeneration Controls */}
+            <div className="space-y-4">
+                <div>
+                    <label htmlFor={`image-size-${creative.id}`} className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Resolución</label>
+                    <select 
+                        id={`image-size-${creative.id}`}
+                        value={imageSize} 
+                        onChange={(e) => setImageSize(e.target.value)} 
+                        disabled={activeVariant.isGenerating} 
+                        className="w-full bg-slate-700 text-slate-200 text-sm font-medium py-2 px-3 rounded-lg hover:bg-slate-600 focus:ring-1 focus:ring-indigo-500 transition-colors"
+                    >
+                        <option value="1K">1K</option>
+                        <option value="2K">2K</option>
+                        <option value="4K">4K</option>
+                    </select>
+                </div>
+
+                <button
+                    onClick={handleRegenerateClick}
+                    disabled={activeVariant.isGenerating}
+                    className="w-full flex items-center justify-center gap-2 bg-slate-700 text-slate-200 font-medium py-2.5 px-4 rounded-lg hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed transition-all duration-200"
+                >
+                    <Icon name="regenerate" className="w-5 h-5"/>
+                    Regenerar Variante {activeVariantKey}
+                </button>
+            </div>
+
+            {/* Edit Section */}
+            <div className="pt-6 border-t border-slate-700">
+                <label htmlFor={`edit-prompt-${creative.id}`} className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Edición Rápida (In-painting)</label>
+                <div className="flex gap-2">
+                    <textarea
+                        id={`edit-prompt-${creative.id}`}
+                        rows={1}
+                        value={editPrompt}
+                        onChange={(e) => setEditPrompt(e.target.value)}
+                        className="flex-grow bg-slate-700 text-slate-200 text-sm p-3 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none placeholder:text-slate-500 resize-none overflow-hidden"
+                        placeholder="Ej: Haz el texto rojo..."
+                        disabled={activeVariant.isGenerating || !activeVariant.image}
+                    />
+                    <button
+                        onClick={handleEditClick}
+                        disabled={activeVariant.isGenerating || !editPrompt.trim() || !activeVariant.image}
+                        className="bg-indigo-600 text-white p-3 rounded-lg hover:bg-indigo-700 disabled:bg-slate-700 disabled:text-slate-500 transition-colors"
+                        title="Aplicar cambios"
+                    >
+                        <Icon name="sparkles" className="w-5 h-5"/>
+                    </button>
+                </div>
+            </div>
+          </div>
       </div>
     </div>
   );

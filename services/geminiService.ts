@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type, FunctionDeclaration, Chat } from "@google/genai";
 import type { AdCreativeText, Asset } from '../types';
 
@@ -9,7 +8,7 @@ const textModel = "gemini-2.5-flash";
 const imageModel = "gemini-3-pro-image-preview";
 
 /**
- * Llama a Gemini con la herramienta urlContext para analizar el contenido de las URLs 
+ * Llama a Gemini con la herramienta googleSearch para analizar el contenido de las URLs 
  * proporcionadas dentro de una cadena de texto y devuelve un resumen.
  */
 export async function summarizeUrlContent(contextWithUrls: string): Promise<string> {
@@ -35,7 +34,7 @@ export async function summarizeUrlContent(contextWithUrls: string): Promise<stri
       model: textModel,
       contents: [{ text: prompt }],
       config: {
-        tools: [{ urlContext: {} }] 
+        tools: [{ googleSearch: {} }] 
       }
     });
     return response.text?.trim() ?? "";
@@ -51,7 +50,8 @@ export async function summarizeUrlContent(contextWithUrls: string): Promise<stri
  */
 export async function generateAdCreatives(
     campaignBrief: string, 
-    numberOfCreatives: number, 
+    numberOfCreatives: number,
+    targetRatios: string[], // e.g. ["9:16", "1:1"]
     styleGuide?: string | null,
     assets?: Asset[]
 ): Promise<AdCreativeText[]> {
@@ -65,29 +65,23 @@ export async function generateAdCreatives(
     
     Tu tarea es diseñar ${numberOfCreatives} conceptos de anuncios visuales completos basados en el brief del cliente.
     
-    PARA CADA CONCEPTO, debes generar un objeto JSON.
+    Para CADA CONCEPTO, debes generar adaptaciones para los siguientes formatos: ${targetRatios.join(', ')}. El concenpto tiene que ser el mismo (mismo fondo, mismo texto, mismas personas/perros, etc), unicamente tienes que cambiar la composicion para que se vea natural en cada formato.
     
-    IMPORTANTE: Ya no estamos generando "texto para superponer" en una app. Estamos generando un PROMPT MAESTRO para que una IA genere la IMAGEN FINAL con todo el texto, diseño, producto y montaje ya incluidos (Burned-in).
-    
-    Los textos dentro de la imagen deben ser cortos, legibles y de alto impacto.
+    IMPORTANTE: La composición debe cambiar según el formato y el uso
+    - 9:16 (Stories/Reels): Vertical. Texto arriba o abajo. Deja espacio central.
+    - 16:9 (Youtube): Horizontal. Texto a los lados.
+    - 1:1 (Feed): Cuadrado. Composición centrada.
     
     REGLAS OBLIGATORIAS:
-    1. He adjuntado las imágenes de los assets a esta solicitud. Analízalas visualmente para entender sus colores, formas y qué son.
-    2. Los nombres de estos archivos corresponden a: ${assetNames}.
-    3. Debes usar TODOS los assets disponibles si es posible. En tus instrucciones (gemini3Prompt), indica explícitamente dónde colocar cada asset refiriéndote a ellos por su nombre (ej: "Coloca el asset '${assets?.[0]?.name || 'logo'}' en la esquina superior derecha").
-    4. Sigue estrictamente la guía de estilo si se proporciona.
-    5. El 'gemini3Prompt' debe ser una instrucción detallada y estructurada para la IA de imagen. 
-    
-    IMPORTANTE FORMATO:
-    El campo 'gemini3Prompt' DEBE usar saltos de línea explícitos para separar claramente el Concepto, el Prompt Visual y las Instrucciones de Montaje. No entregues un bloque de texto sólido. Queremos que sea legible.
+    1. He adjuntado las imágenes de los assets. Analízalos.
+    2. Assets disponibles: ${assetNames}.
+    3. En tus prompts, indica explícitamente dónde colocar cada asset.
+    4. El 'gemini3Prompt' debe ser una instrucción detallada y estructurada para la IA de imagen. 
     
     EJEMPLO DE ESTRUCTURA DEL 'gemini3Prompt' (Úsalo como referencia de calidad):
     ---
     Concepto: [Nombre del concepto]
-    
-    Prompt Visual: 
-    Vertical 3:4 shot. Fondo elegante y oscuro. Primer plano de una mano acariciando un perro. Iluminación cinemática.
-    
+    Prompt Visual: Vertical 3:4 shot. Fondo elegante y oscuro. Primer plano de una mano acariciando un perro. Iluminación cinemática.
     Instrucciones de Montaje:
     - Fondo: La imagen generada descrita arriba.
     - Centro: Coloca el producto '${assets?.[0]?.name || 'producto'}' nítido en el centro.
@@ -95,13 +89,25 @@ export async function generateAdCreatives(
     - Texto Inferior: Oferta "50% OFF" en un sticker naranja brillante. Subtítulo "Adiós pulgas" en fuente pequeña sans-serif.
     - Assets: Integra el asset visual adjunto '${assets?.[0]?.name || 'asset'}' de forma natural en la composición.
     ---
-
+    
+    IMPORTANTE FORMATO:
+    Usa saltos de línea explícitos para separar secciones (Concepto, Visual, Montaje).
+    
     BRIEF DE CAMPAÑA:
     ${campaignBrief}
 
     ${styleGuide ? `\nGUÍA DE ESTILO APLICABLE:\n${styleGuide}` : ''}
   `;
   
+  // Dynamically build schema properties for the requested ratios
+  const variantPromptsProperties: Record<string, any> = {};
+  targetRatios.forEach(ratio => {
+      variantPromptsProperties[ratio] = {
+          type: Type.STRING,
+          description: `El prompt maestro optimizado específicamente para el ratio ${ratio}. Adapta la posición del texto y elementos.`
+      };
+  });
+
   const responseSchema = {
     type: Type.ARRAY,
     items: {
@@ -109,22 +115,23 @@ export async function generateAdCreatives(
       properties: {
           title: {
             type: Type.STRING,
-            description: "Un nombre corto para el concepto (solo para referencia interna del usuario)."
+            description: "Un nombre corto para el concepto."
           },
           subtitle: {
              type: Type.STRING,
-             description: "Breve descripción de la idea (solo referencia interna)."
+             description: "Breve descripción de la idea."
           },
           rationale: {
             type: Type.STRING,
-            description: "Explicación breve de por qué este diseño funcionará para el objetivo."
+            description: "Explicación de la estrategia."
           },
-          gemini3Prompt: {
-            type: Type.STRING,
-            description: "El prompt maestro COMPLETO. IMPORTANTE: Usa saltos de línea para separar secciones (Concepto, Visual, Montaje) para que sea legible."
+          variantPrompts: {
+            type: Type.OBJECT,
+            properties: variantPromptsProperties,
+            required: targetRatios
           }
         },
-      required: ["title", "subtitle", "gemini3Prompt", "rationale"]
+      required: ["title", "subtitle", "rationale", "variantPrompts"]
     }
   };
 
@@ -177,13 +184,10 @@ export async function generateAdImage(
 ): Promise<string> {
     const ai = getAI();
     
-    // El prompt ya viene "cocinado" desde generateAdCreatives, solo añadimos un refuerzo técnico final
     const finalPrompt = `${gemini3Prompt}`;
 
-    // Build the contents array
     const parts: any[] = [];
 
-    // Add assets first (standard convention for image input)
     if (assets) {
         assets.forEach(asset => {
             parts.push({
@@ -195,7 +199,6 @@ export async function generateAdImage(
         });
     }
 
-    // Add the text prompt
     parts.push({ text: finalPrompt });
 
     try {
@@ -228,13 +231,20 @@ export async function generateAdImage(
     }
 }
 
-export async function editAdImage(base64ImageData: string, mimeType: string, editPrompt: string, imageSize: string): Promise<string> {
+/**
+ * Edita una imagen existente usando Gemini 3 Pro.
+ */
+export async function editAdImage(
+    base64ImageData: string,
+    mimeType: string,
+    editPrompt: string,
+    imageSize: string
+): Promise<string> {
     const ai = getAI();
-    const imageEditModel = 'gemini-3-pro-image-preview';
 
     try {
         const response = await ai.models.generateContent({
-            model: imageEditModel,
+            model: imageModel,
             contents: {
                 parts: [
                     {
@@ -255,7 +265,6 @@ export async function editAdImage(base64ImageData: string, mimeType: string, edi
             },
         });
 
-        // Find the image part in the response
         for (const part of response.candidates?.[0]?.content?.parts || []) {
             if (part.inlineData) {
                 const base64ImageBytes: string = part.inlineData.data;
@@ -315,14 +324,14 @@ export function createInteractiveChat(): Chat {
             1. Objetivo (objective): Aumentar ventas, leads, reconocimiento, etc.
             2. Acción de la audiencia (audienceAction): Qué deben pensar o hacer.
             3. Mensaje clave (keyMessage): El slogan o idea fuerza.
-            4. Contexto (context): Detalles del producto, servicio o marca.
+            4. Contexto (context): Detalles del producto, servicio o marca. Es IMPERATIVO de incluyas aqui en donde se publicaran los anuncios.
             
             REGLAS DE ORO:
             - NO ASUMAS NADA. Haz preguntas para obtener la información.
             - Sugiere ideas brillantes si el usuario duda, pero siempre pide confirmación.
             - Sé breve y conciso. Ve paso a paso.
             - Usa la herramienta 'update_form_fields' en cuanto tengas información clara para actualizar el formulario del usuario en tiempo real.
-            - Al finalizar, cuando creas que todo está listo, recuérdale al usuario que debe cerrar este chat y que NO OLVIDE subir sus ASSETS (imágenes, logos) en el formulario principal, ya que tú no puedes hacerlo por aquí.
+            - Al finalizar, cuando creas que todo está listo, recuérdale al usuario que debe cerrar este chat y que NO OLVIDE subir sus ASSETS (imágenes, logos) y seleccionar los FORMATOS (Ratios) en el formulario principal.
             
             Empieza saludando amablemente y preguntando qué vamos a vender o promocionar hoy.
             `,

@@ -4,23 +4,29 @@ export interface AdImage {
   aspectRatio: string;
 }
 
+export interface AdVariant {
+  aspectRatio: string;
+  imagePrompt: string; // The specific prompt for this ratio
+  image?: AdImage;
+  isGenerating: boolean;
+}
+
 export interface AdCreative {
   id: string;
-  title: string; // Used for UI reference/editing intention
-  subtitle: string; // Used for UI reference/editing intention
-  imagePrompt: string; // This is now the Full Gemini 3 prompt
-  images: AdImage[];
-  currentImageIndex: number;
-  isGenerating: boolean;
-  aspectRatio: string;
-  imageSize: string;
+  title: string;
+  subtitle: string;
+  rationale: string;
+  variants: Record<string, AdVariant>; // Keyed by ratio e.g. "9:16"
+  activeVariant: string; // The currently selected ratio tab
+  imageSize: string; // Shared setting
 }
 
 export interface AdCreativeText {
   title: string;
   subtitle:string;
-  gemini3Prompt: string; // The complex structured prompt
-  rationale: string; // Why this design?
+  rationale: string;
+  // Dynamic map of prompts keyed by ratio "16:9": "prompt..."
+  variantPrompts: Record<string, string>; 
 }
 
 export interface Asset {

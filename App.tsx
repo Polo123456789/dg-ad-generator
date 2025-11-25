@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import type { AdCreative, AdCreativeText, Asset } from './types';
+import type { AdCreative, AdCreativeText, Asset, AdVariant } from './types';
 import { generateAdCreatives, generateAdImage, summarizeUrlContent, editAdImage } from './services/geminiService';
 import CampaignInput from './components/CampaignInput';
 import AdDisplay from './components/AdDisplay';
@@ -35,9 +35,9 @@ const App: React.FC = () => {
   const [audienceAction, setAudienceAction] = useState('');
   const [keyMessage, setKeyMessage] = useState('');
   const [context, setContext] = useState('');
-  const [aspectRatio, setAspectRatio] = useState('3:4');
+  const [aspectRatios, setAspectRatios] = useState<string[]>(['9:16', '1:1']);
   const [imageSize, setImageSize] = useState('1K');
-  const [numberOfImages, setNumberOfImages] = useState(3);
+  const [numberOfImages, setNumberOfImages] = useState(2);
   const [styleGuideContent, setStyleGuideContent] = useState<string | null>(null);
   const [attachStyleGuideDirectly, setAttachStyleGuideDirectly] = useState<boolean>(false);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -83,7 +83,7 @@ const App: React.FC = () => {
     audienceAction,
     keyMessage,
     context,
-    aspectRatio,
+    aspectRatios,
     imageSize,
     numberOfImages,
     styleGuideContent,
@@ -94,7 +94,7 @@ const App: React.FC = () => {
     audienceAction,
     keyMessage,
     context,
-    aspectRatio,
+    aspectRatios,
     imageSize,
     numberOfImages,
     styleGuideContent,
@@ -119,7 +119,7 @@ const App: React.FC = () => {
                     audienceAction,
                     keyMessage,
                     context,
-                    aspectRatio,
+                    aspectRatios,
                     imageSize,
                     numberOfImages,
                     styleGuideContent,
@@ -131,7 +131,7 @@ const App: React.FC = () => {
                 setAudienceAction(audienceAction);
                 setKeyMessage(keyMessage);
                 setContext(context);
-                setAspectRatio(aspectRatio);
+                setAspectRatios(aspectRatios || ['9:16', '1:1']);
                 setImageSize(imageSize || '1K');
                 setNumberOfImages(numberOfImages);
                 setStyleGuideContent(styleGuideContent || null);
@@ -170,6 +170,10 @@ const App: React.FC = () => {
       setError("Los campos '¿Qué queremos que la audiencia piense o haga?' y '¿Cuál es nuestro mensaje clave?' son obligatorios.");
       return;
     }
+    if (aspectRatios.length === 0) {
+        setError("Debes seleccionar al menos un formato (relación de aspecto).");
+        return;
+    }
 
     setIsGeneratingInitial(true);
     setError(null);
@@ -182,129 +186,201 @@ const App: React.FC = () => {
       const hasUrls = urlRegex.test(context);
 
       if (hasUrls) {
-        // 1. Si hay URLs, obtén un resumen de su contenido primero.
         urlSummary = await summarizeUrlContent(context);
         setUrlSummaryForDisplay(urlSummary);
       }
       
-      // 2. Construye el brief final para la generación de anuncios.
       let campaignBrief = `
         - Objetivo principal de la campaña: ${objective}.
         - Lo que queremos que la audiencia piense o haga: ${audienceAction}.
         - Nuestro mensaje clave: ${keyMessage}.
       `;
       if (context.trim()) {
-          campaignBrief += `\n- Contexto adicional proporcionado por el usuario (descripciones, promociones, URLs, etc.): ${context}.`;
+          campaignBrief += `\n- Contexto adicional: ${context}.`;
       }
       if (urlSummary.trim()) {
-          campaignBrief += `\n- PUNTOS CLAVE EXTRAÍDOS DEL CONTENIDO DE LAS URLs: ${urlSummary}.`;
+          campaignBrief += `\n- PUNTOS CLAVE EXTRAÍDOS DEL WEB: ${urlSummary}.`;
       }
 
-      // 3. Genera el PLAN del anuncio (Prompt Maestro) usando Flash.
-      // Le pasamos los assets para que Flash sepa qué imágenes existen y cómo orquestarlas.
+      // Generate Concepts with specific prompts for each requested ratio
       const textCreatives: AdCreativeText[] = await generateAdCreatives(
         campaignBrief, 
         numberOfImages,
-        styleGuideContent, // Always pass style guide to Flash creator
+        aspectRatios,
+        styleGuideContent, 
         assets 
       );
       
-      const initialCreatives: AdCreative[] = textCreatives.map((tc, index) => ({
-        id: `${Date.now()}-${index}`,
-        title: tc.title,
-        subtitle: tc.subtitle || tc.rationale, // Use subtitle or rationale for the UI header
-        imagePrompt: tc.gemini3Prompt, // STORE THE FULL GEMINI 3 PROMPT HERE
-        images: [],
-        currentImageIndex: 0,
-        isGenerating: true, // Start as true for parallel generation
-        aspectRatio: aspectRatio,
-        imageSize: imageSize,
-      }));
+      // Initialize structure
+      const initialCreatives: AdCreative[] = textCreatives.map((tc, index) => {
+          const variants: Record<string, AdVariant> = {};
+          
+          aspectRatios.forEach(ratio => {
+              variants[ratio] = {
+                  aspectRatio: ratio,
+                  imagePrompt: tc.variantPrompts[ratio] || `Error: No prompt for ${ratio}`,
+                  isGenerating: true,
+                  image: undefined
+              };
+          });
+
+          return {
+            id: `${Date.now()}-${index}`,
+            title: tc.title,
+            subtitle: tc.subtitle || tc.rationale,
+            rationale: tc.rationale,
+            variants: variants,
+            activeVariant: aspectRatios[0], // Default to first selected
+            imageSize: imageSize,
+          };
+      });
+
       setAdCreatives(initialCreatives);
       setIsGeneratingInitial(false);
 
-      // 4. Genera las imágenes finales con Gemini 3 Pro usando el prompt maestro en PARALELO (Batch).
-      await Promise.all(initialCreatives.map(async (creative) => {
-        try {
-            const imageUrl = await generateAdImage(
-              creative.imagePrompt, // Contains the full instructions (Text + Visual + Layout)
-              creative.aspectRatio,
-              creative.imageSize,
-              assets // Gemini 3 receives the actual binary assets
-            );
-            
-            setAdCreatives(prev =>
-                prev ? prev.map(c => c.id === creative.id ? { 
-                    ...c, 
-                    images: [{ url: imageUrl, aspectRatio: creative.aspectRatio }], 
-                    currentImageIndex: 0, 
-                    isGenerating: false 
-                } : c) : null
-            );
-            setTotalCost(prevCost => prevCost + 0.14);
-        } catch (e) {
-            console.error(`Failed to generate image for creative ${creative.id}:`, e);
-            
-            setError(prev => {
-                const msg = `Error en '${creative.title}': ${formatError(e)}`;
-                return prev ? `${prev}\n${msg}` : msg;
-            });
+      // Trigger parallel generation for ALL variants across ALL creatives
+      const allPromises = initialCreatives.flatMap(creative => 
+          aspectRatios.map(async (ratio) => {
+              const variant = creative.variants[ratio];
+              try {
+                  const imageUrl = await generateAdImage(
+                      variant.imagePrompt, 
+                      ratio,
+                      creative.imageSize,
+                      assets
+                  );
+                  
+                  setAdCreatives(prev => {
+                      if (!prev) return null;
+                      return prev.map(c => {
+                          if (c.id === creative.id) {
+                              return {
+                                  ...c,
+                                  variants: {
+                                      ...c.variants,
+                                      [ratio]: {
+                                          ...c.variants[ratio],
+                                          image: { url: imageUrl, aspectRatio: ratio },
+                                          isGenerating: false
+                                      }
+                                  }
+                              };
+                          }
+                          return c;
+                      });
+                  });
+                  setTotalCost(prevCost => prevCost + 0.14);
 
-            setAdCreatives(prev =>
-                prev ? prev.map(c => c.id === creative.id ? { ...c, isGenerating: false } : c) : null
-            );
-        }
-      }));
+              } catch (e) {
+                   console.error(`Failed to generate ${ratio} for creative ${creative.id}:`, e);
+                   setAdCreatives(prev => {
+                      if (!prev) return null;
+                      return prev.map(c => {
+                          if (c.id === creative.id) {
+                              return {
+                                  ...c,
+                                  variants: {
+                                      ...c.variants,
+                                      [ratio]: {
+                                          ...c.variants[ratio],
+                                          isGenerating: false // Stop spinner even if failed
+                                      }
+                                  }
+                              };
+                          }
+                          return c;
+                      });
+                  });
+              }
+          })
+      );
+      
+      await Promise.all(allPromises);
 
     } catch (e) {
       console.error(e);
       setError(formatError(e));
       setIsGeneratingInitial(false);
     }
-  }, [objective, audienceAction, keyMessage, context, numberOfImages, aspectRatio, imageSize, styleGuideContent, attachStyleGuideDirectly, assets]);
+  }, [objective, audienceAction, keyMessage, context, numberOfImages, aspectRatios, imageSize, styleGuideContent, attachStyleGuideDirectly, assets]);
 
 
-  const handleRegenerateImage = useCallback(async (id: string, newPrompt: string, newAspectRatio: string, newImageSize: string) => {
-    // Note: newPrompt here is the full Gemini 3 prompt edited by user
+  const handleRegenerateVariant = useCallback(async (id: string, ratio: string, newPrompt: string, newImageSize: string) => {
     const targetCreative = adCreatives?.find(c => c.id === id);
     if (!targetCreative) return;
     
     setError(null);
 
+    // Set generating state
     setAdCreatives(prev => 
-      prev!.map(c => c.id === id ? { ...c, isGenerating: true, imagePrompt: newPrompt, aspectRatio: newAspectRatio, imageSize: newImageSize } : c)
+      prev!.map(c => {
+          if (c.id === id) {
+              return {
+                  ...c,
+                  imageSize: newImageSize, // update global size preference for this card
+                  variants: {
+                      ...c.variants,
+                      [ratio]: {
+                          ...c.variants[ratio],
+                          imagePrompt: newPrompt,
+                          isGenerating: true
+                      }
+                  }
+              };
+          }
+          return c;
+      })
     );
 
     try {
       const newImageUrl = await generateAdImage(
         newPrompt,
-        newAspectRatio,
+        ratio,
         newImageSize,
-        assets // Use assets for regeneration too
+        assets
       );
-      setAdCreatives(prev =>
-        prev!.map(c => c.id === id ? { ...c, images: [...c.images, { url: newImageUrl, aspectRatio: newAspectRatio }], currentImageIndex: c.images.length, isGenerating: false } : c)
+
+      setAdCreatives(prev => 
+        prev!.map(c => {
+            if (c.id === id) {
+                return {
+                    ...c,
+                    variants: {
+                        ...c.variants,
+                        [ratio]: {
+                            ...c.variants[ratio],
+                            image: { url: newImageUrl, aspectRatio: ratio },
+                            isGenerating: false
+                        }
+                    }
+                };
+            }
+            return c;
+        })
       );
       setTotalCost(prevCost => prevCost + 0.14);
+
     } catch (e) {
-      console.error(`Failed to regenerate image for creative ${id}:`, e);
+      console.error(`Failed to regenerate variant ${id} ${ratio}:`, e);
       setError(formatError(e));
       setAdCreatives(prev =>
-        prev!.map(c => c.id === id ? { ...c, isGenerating: false } : c)
+        prev!.map(c => c.id === id ? { 
+            ...c, 
+            variants: { ...c.variants, [ratio]: { ...c.variants[ratio], isGenerating: false } } 
+        } : c)
       );
     }
   }, [adCreatives, assets]);
 
-  const handleEditImage = useCallback(async (id: string, editPrompt: string, imageSize: string) => {
+  const handleEditVariant = useCallback(async (id: string, ratio: string, editPrompt: string, imageSize: string) => {
     const targetCreative = adCreatives?.find(c => c.id === id);
-    if (!targetCreative || targetCreative.images.length === 0) return;
+    if (!targetCreative) return;
+    
+    const variant = targetCreative.variants[ratio];
+    if (!variant.image) return;
 
     setError(null);
-
-    const currentImage = targetCreative.images[targetCreative.currentImageIndex];
-    const base64DataUrl = currentImage.url;
-
-    // Extract mime type and base64 data from data URL
+    const base64DataUrl = variant.image.url;
     const match = base64DataUrl.match(/^data:(image\/.*?);base64,(.*)$/);
     if (!match) {
         setError("Formato de imagen actual no válido para la edición.");
@@ -313,36 +389,48 @@ const App: React.FC = () => {
     const mimeType = match[1];
     const base64ImageData = match[2];
 
-    setAdCreatives(prev =>
-        prev!.map(c => c.id === id ? { ...c, isGenerating: true } : c)
+    setAdCreatives(prev => 
+        prev!.map(c => c.id === id ? { 
+            ...c, 
+            variants: { ...c.variants, [ratio]: { ...c.variants[ratio], isGenerating: true } } 
+        } : c)
     );
 
     try {
         const newImageUrl = await editAdImage(base64ImageData, mimeType, editPrompt, imageSize);
-        setAdCreatives(prev =>
-            prev!.map(c => c.id === id ? { ...c, images: [...c.images, { url: newImageUrl, aspectRatio: c.aspectRatio }], currentImageIndex: c.images.length, isGenerating: false, imageSize: imageSize } : c)
+        setAdCreatives(prev => 
+            prev!.map(c => {
+                if (c.id === id) {
+                    return {
+                        ...c,
+                        variants: {
+                            ...c.variants,
+                            [ratio]: {
+                                ...c.variants[ratio],
+                                image: { url: newImageUrl, aspectRatio: ratio },
+                                isGenerating: false
+                            }
+                        }
+                    };
+                }
+                return c;
+            })
         );
-        // setTotalCost(prevCost => prevCost + 0.14); // Editing might cost differently, keeping silent for now or same price
+        // setTotalCost(prevCost => prevCost + 0.14); // Optional
     } catch (e) {
         console.error(`Failed to edit image for creative ${id}:`, e);
         setError(formatError(e));
         setAdCreatives(prev =>
-            prev!.map(c => c.id === id ? { ...c, isGenerating: false } : c)
+            prev!.map(c => c.id === id ? { 
+                ...c, 
+                variants: { ...c.variants, [ratio]: { ...c.variants[ratio], isGenerating: false } } 
+            } : c)
         );
     }
   }, [adCreatives]);
 
-  const handleSetCurrentImageIndex = useCallback((id: string, index: number) => {
-    setAdCreatives(prev => {
-        if (!prev) return null;
-        return prev.map(c => {
-            if (c.id === id) {
-                const newIndex = Math.max(0, Math.min(index, c.images.length - 1));
-                return { ...c, currentImageIndex: newIndex };
-            }
-            return c;
-        });
-    });
+  const handleSetActiveVariant = useCallback((id: string, ratio: string) => {
+      setAdCreatives(prev => prev ? prev.map(c => c.id === id ? { ...c, activeVariant: ratio } : c) : null);
   }, []);
 
   const handleGoBack = () => {
@@ -354,20 +442,19 @@ const App: React.FC = () => {
   
   const handleClearSession = () => {
     localStorage.removeItem(LOCAL_STORAGE_KEY);
-
     setAdCreatives(null);
     setError(null);
     setIsGeneratingInitial(false);
     setUrlSummaryForDisplay(null);
     setTotalCost(0);
-
+    // Reset form defaults
     setObjective('Aumentar ventas');
     setAudienceAction('');
     setKeyMessage('');
     setContext('');
-    setAspectRatio('3:4');
+    setAspectRatios(['9:16', '1:1']);
     setImageSize('1K');
-    setNumberOfImages(3);
+    setNumberOfImages(2);
     setStyleGuideContent(null);
     setAttachStyleGuideDirectly(false);
     setAssets([]);
@@ -375,7 +462,6 @@ const App: React.FC = () => {
 
   const handleExport = useCallback(() => {
     if (!adCreatives) return;
-
     const exportData = {
         adCreatives,
         totalCost,
@@ -385,7 +471,7 @@ const App: React.FC = () => {
             audienceAction,
             keyMessage,
             context,
-            aspectRatio,
+            aspectRatios,
             imageSize,
             numberOfImages,
             styleGuideContent,
@@ -393,7 +479,6 @@ const App: React.FC = () => {
             assets
         }
     };
-
     const jsonString = JSON.stringify(exportData, null, 2);
     const blob = new Blob([jsonString], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -404,81 +489,50 @@ const App: React.FC = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [adCreatives, totalCost, urlSummaryForDisplay, objective, audienceAction, keyMessage, context, aspectRatio, imageSize, numberOfImages, styleGuideContent, attachStyleGuideDirectly, assets]);
+  }, [adCreatives, totalCost, urlSummaryForDisplay, objective, audienceAction, keyMessage, context, aspectRatios, imageSize, numberOfImages, styleGuideContent, attachStyleGuideDirectly, assets]);
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (event) => {
         try {
             const text = event.target?.result as string;
             const data = JSON.parse(text);
-
-            // Basic validation
             if (!data.adCreatives || !data.formState || typeof data.totalCost === 'undefined') {
-                throw new Error("El archivo de importación no es válido o está corrupto.");
+                throw new Error("El archivo de importación no es válido.");
             }
-            
-            // Restore state
             setAdCreatives(data.adCreatives);
             setTotalCost(data.totalCost);
             setUrlSummaryForDisplay(data.urlSummaryForDisplay || null);
-
-            const {
-                objective,
-                audienceAction,
-                keyMessage,
-                context,
-                aspectRatio,
-                imageSize,
-                numberOfImages,
-                styleGuideContent,
-                attachStyleGuideDirectly,
-                assets
-            } = data.formState;
-
+            const { objective, audienceAction, keyMessage, context, aspectRatios, imageSize, numberOfImages, styleGuideContent, attachStyleGuideDirectly, assets } = data.formState;
             setObjective(objective);
             setAudienceAction(audienceAction);
             setKeyMessage(keyMessage);
             setContext(context);
-            setAspectRatio(aspectRatio);
+            setAspectRatios(aspectRatios || ['9:16', '1:1']);
             setImageSize(imageSize || '1K');
             setNumberOfImages(numberOfImages);
             setStyleGuideContent(styleGuideContent || null);
             setAttachStyleGuideDirectly(attachStyleGuideDirectly);
             setAssets(assets || []);
-
             setError(null);
             setIsGeneratingInitial(false);
-
         } catch (err) {
-            console.error("Error importing file:", err);
-            setError(formatError(err instanceof Error ? err.message : "Error al procesar el archivo."));
+            console.error("Error importing:", err);
+            setError(formatError(err instanceof Error ? err.message : "Error."));
         } finally {
-            // Reset file input so the same file can be imported again
-            if (importInputRef.current) {
-                importInputRef.current.value = '';
-            }
+            if (importInputRef.current) importInputRef.current.value = '';
         }
     };
     reader.onerror = () => {
-         setError("No se pudo leer el archivo seleccionado.");
-         if (importInputRef.current) {
-            importInputRef.current.value = '';
-         }
+         setError("No se pudo leer el archivo.");
+         if (importInputRef.current) importInputRef.current.value = '';
     };
     reader.readAsText(file);
   };
 
-  if (checkingKey) {
-    return (
-        <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-            <Spinner className="w-10 h-10" />
-        </div>
-    );
-  }
+  if (checkingKey) return <div className="min-h-screen bg-slate-900 flex items-center justify-center"><Spinner className="w-10 h-10" /></div>;
 
   if (!hasApiKey) {
     return (
@@ -488,18 +542,8 @@ const App: React.FC = () => {
                     <img src="https://dhgf5mcbrms62.cloudfront.net/29462425/header-fcHJMd/DVnsPlP-200x200.webp" alt="Logo" className="h-16 w-16 rounded-xl" />
                 </div>
                 <h1 className="text-2xl font-bold text-white">Configuración Requerida</h1>
-                <p className="text-slate-300">
-                    Para utilizar el modelo <strong>Gemini 3 Pro Image Preview</strong>, es necesario seleccionar un proyecto de Google Cloud con facturación habilitada.
-                </p>
-                <button 
-                    onClick={handleConnect}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-[1.02]"
-                >
-                    Conectar Cuenta de Google
-                </button>
-                 <p className="text-xs text-slate-500 mt-4">
-                    Al continuar, aceptas los términos de uso. Consulta la <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">documentación de facturación</a> para más detalles sobre los costos de la API.
-                </p>
+                <p className="text-slate-300">Para usar Gemini 3 Pro, conecta tu proyecto de Google Cloud.</p>
+                <button onClick={handleConnect} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-[1.02]">Conectar Cuenta</button>
              </div>
         </div>
     );
@@ -509,7 +553,7 @@ const App: React.FC = () => {
     <div className="min-h-screen text-slate-200 p-4 sm:p-6 md:p-8 flex flex-col">
       <header className="w-full max-w-7xl mx-auto flex justify-between items-center mb-8 flex-wrap gap-4">
         <div className="flex items-center gap-4">
-            <img src="https://dhgf5mcbrms62.cloudfront.net/29462425/header-fcHJMd/DVnsPlP-200x200.webp" alt="Logo de la aplicación" className="h-12 w-auto rounded-lg" />
+            <img src="https://dhgf5mcbrms62.cloudfront.net/29462425/header-fcHJMd/DVnsPlP-200x200.webp" alt="Logo" className="h-12 w-auto rounded-lg" />
             <h1 className="text-2xl md:text-3xl font-bold text-slate-100">Generador de Anuncios <span className="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded-full align-middle ml-2">PRO</span></h1>
         </div>
         <div className="flex items-center gap-2 sm:gap-4">
@@ -518,35 +562,11 @@ const App: React.FC = () => {
                 <p className="text-lg font-bold text-green-400">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(totalCost)}</p>
             </div>
             
-            <input 
-                type="file" 
-                ref={importInputRef} 
-                onChange={handleImport}
-                accept=".json"
-                className="sr-only" 
-                id="import-input"
-            />
-            <label htmlFor="import-input" className="cursor-pointer bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
-                Importar
-            </label>
-
-            <button 
-                onClick={handleExport} 
-                disabled={!adCreatives}
-                className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed"
-            >
-                Exportar
-            </button>
-            
-            {adCreatives && (
-              <button onClick={handleGoBack} className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
-                  Regresar
-              </button>
-            )}
-
-            <button onClick={handleClearSession} title="Limpiar todo y empezar de nuevo" className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors">
-                Limpiar
-            </button>
+            <input type="file" ref={importInputRef} onChange={handleImport} accept=".json" className="sr-only" id="import-input" />
+            <label htmlFor="import-input" className="cursor-pointer bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">Importar</label>
+            <button onClick={handleExport} disabled={!adCreatives} className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed">Exportar</button>
+            {adCreatives && <button onClick={handleGoBack} className="bg-slate-700 hover:bg-slate-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors">Regresar</button>}
+            <button onClick={handleClearSession} className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors">Limpiar</button>
         </div>
       </header>
 
@@ -563,8 +583,8 @@ const App: React.FC = () => {
             setKeyMessage={setKeyMessage}
             context={context}
             setContext={setContext}
-            aspectRatio={aspectRatio}
-            setAspectRatio={setAspectRatio}
+            aspectRatios={aspectRatios}
+            setAspectRatios={setAspectRatios}
             imageSize={imageSize}
             setImageSize={setImageSize}
             numberOfImages={numberOfImages}
@@ -577,9 +597,15 @@ const App: React.FC = () => {
             setAssets={setAssets}
             />
         ) : (
-          <div className="w-full max-w-3xl mx-auto grid grid-cols-1 gap-8">
+          <div className="w-full max-w-4xl mx-auto grid grid-cols-1 gap-12">
             {adCreatives.map(creative => (
-              <AdDisplay key={creative.id} creative={creative} onRegenerate={handleRegenerateImage} onSetCurrentImageIndex={handleSetCurrentImageIndex} onEdit={handleEditImage} />
+              <AdDisplay 
+                key={creative.id} 
+                creative={creative} 
+                onRegenerate={handleRegenerateVariant} 
+                onEdit={handleEditVariant}
+                onSetActiveVariant={handleSetActiveVariant}
+              />
             ))}
           </div>
         )}
@@ -589,13 +615,9 @@ const App: React.FC = () => {
                 <details className="bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-xl p-4 transition-all duration-300 open:pb-5">
                     <summary className="cursor-pointer font-semibold text-slate-300 list-none flex justify-between items-center">
                         <span>Ver contexto extraído de las URLs</span>
-                         <svg className="w-5 h-5 transition-transform duration-200 transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" xmlns="http://www.w3.org/2000/svg">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                        </svg>
+                         <svg className="w-5 h-5 transition-transform duration-200 transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" strokeWidth="2.5" stroke="currentColor" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
                     </summary>
-                    <p className="mt-4 text-slate-400 whitespace-pre-wrap border-t border-slate-700 pt-4">
-                        {urlSummaryForDisplay}
-                    </p>
+                    <p className="mt-4 text-slate-400 whitespace-pre-wrap border-t border-slate-700 pt-4">{urlSummaryForDisplay}</p>
                 </details>
             </div>
         )}
@@ -603,9 +625,7 @@ const App: React.FC = () => {
         {error && (
             <div className="mt-8 w-full max-w-4xl mx-auto">
               <p className="font-semibold text-red-400 mb-2">Error de la API (Uso Interno):</p>
-              <pre className="bg-slate-950 border border-red-500/50 text-red-300 p-4 rounded-lg text-xs whitespace-pre-wrap break-words">
-                {error}
-              </pre>
+              <pre className="bg-slate-950 border border-red-500/50 text-red-300 p-4 rounded-lg text-xs whitespace-pre-wrap break-words">{error}</pre>
             </div>
         )}
       </main>
