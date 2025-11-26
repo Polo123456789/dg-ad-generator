@@ -1,10 +1,12 @@
 
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
-import type { AdCreative, AdCreativeText, Asset, AdVariant } from './types';
+import type { AdCreative, AdCreativeText, Asset, AdVariant, AdImage } from './types';
 import { generateAdCreatives, generateAdImage, summarizeUrlContent, editAdImage, generatePreviewImage } from './services/geminiService';
 import CampaignInput from './components/CampaignInput';
 import AdDisplay from './components/AdDisplay';
 import Spinner from './components/Spinner';
+import Icon from './components/Icon';
+import JSZip from 'jszip';
 
 const LOCAL_STORAGE_KEY = 'adCampaignSession';
 
@@ -30,12 +32,16 @@ const App: React.FC = () => {
   const [totalCost, setTotalCost] = useState<number>(0);
   const [urlSummaryForDisplay, setUrlSummaryForDisplay] = useState<string | null>(null);
 
+  // Generate More State
+  const [isGeneratingMore, setIsGeneratingMore] = useState<boolean>(false);
+  const [moreCount, setMoreCount] = useState<number>(1);
+
   // Form state lifted from CampaignInput
   const [objective, setObjective] = useState('Aumentar ventas');
   const [audienceAction, setAudienceAction] = useState('');
   const [keyMessage, setKeyMessage] = useState('');
   const [context, setContext] = useState('');
-  const [aspectRatios, setAspectRatios] = useState<string[]>(['9:16', '1:1']);
+  const [aspectRatios, setAspectRatios] = useState<string[]>(['1:1', '16:9', '3:4']);
   const [imageSize, setImageSize] = useState('1K');
   const [numberOfImages, setNumberOfImages] = useState(2);
   const [styleGuideContent, setStyleGuideContent] = useState<string | null>(null);
@@ -54,7 +60,7 @@ const App: React.FC = () => {
         const has = await window.aistudio.hasSelectedApiKey();
         setHasApiKey(has);
       } else {
-        // Fallback or dev environment
+        // Fallback for dev environment
         setHasApiKey(true);
       }
       setCheckingKey(false);
@@ -110,7 +116,32 @@ const App: React.FC = () => {
             const data = JSON.parse(savedSession);
 
             if (data.adCreatives && data.formState && typeof data.totalCost !== 'undefined') {
-                setAdCreatives(data.adCreatives);
+                // MIGRATION: Ensure creatives have history structure if loaded from old session
+                const migratedCreatives = data.adCreatives.map((c: any) => {
+                    const migratedVariants: Record<string, AdVariant> = {};
+                    Object.keys(c.variants).forEach(key => {
+                        const v = c.variants[key];
+                        // If it has 'image' but no 'history', migrate it
+                        if (v.image && (!v.history || v.history.length === 0)) {
+                            migratedVariants[key] = {
+                                ...v,
+                                history: [{ ...v.image, isPreview: false }], // Assume old ones are not preview
+                                currentHistoryIndex: 0
+                            };
+                        } else if (!v.history) {
+                             migratedVariants[key] = {
+                                ...v,
+                                history: [],
+                                currentHistoryIndex: -1
+                            };
+                        } else {
+                            migratedVariants[key] = v;
+                        }
+                    });
+                    return { ...c, variants: migratedVariants, status: c.status || 'completed' };
+                });
+
+                setAdCreatives(migratedCreatives);
                 setTotalCost(data.totalCost);
                 setUrlSummaryForDisplay(data.urlSummaryForDisplay || null);
 
@@ -161,8 +192,12 @@ const App: React.FC = () => {
         } catch (e) {
             console.warn("Could not save session to localStorage (likely quota exceeded due to images):", e);
         }
+    } else if (adCreatives === null && !isGeneratingInitial) {
+        // If explicitly cleared (null) and not generating, we might want to clear local storage too
+        // or keep it? For now, if null, user likely cleared it.
+        // But we handle explicit clear in handleClearSession.
     }
-  }, [adCreatives, totalCost, urlSummaryForDisplay, formState]);
+  }, [adCreatives, totalCost, urlSummaryForDisplay, formState, isGeneratingInitial]);
 
 
   const handleGenerateIdeas = useCallback(async () => {
@@ -222,8 +257,8 @@ const App: React.FC = () => {
                   aspectRatio: ratio,
                   imagePrompt: tc.variantPrompts[ratio] || `Error: No prompt for ${ratio}`,
                   isGenerating: ratio === primaryRatio, // Only first one is generating (preview)
-                  image: undefined,
-                  isPreview: false
+                  history: [],
+                  currentHistoryIndex: -1,
               };
           });
 
@@ -235,7 +270,7 @@ const App: React.FC = () => {
             variants: variants,
             activeVariant: primaryRatio, // Default to first selected
             imageSize: imageSize,
-            status: 'generating_preview'
+            status: 'generating_preview' // Start in preview generation mode
           };
       });
 
@@ -261,9 +296,9 @@ const App: React.FC = () => {
                                   ...c.variants,
                                   [ratio]: {
                                       ...c.variants[ratio],
-                                      image: { url: imageUrl, aspectRatio: ratio },
+                                      history: [{ url: imageUrl, aspectRatio: ratio, isPreview: true }],
+                                      currentHistoryIndex: 0,
                                       isGenerating: false,
-                                      isPreview: true // Flag as preview
                                   }
                               }
                           };
@@ -271,7 +306,7 @@ const App: React.FC = () => {
                       return c;
                   });
               });
-              // Preview is cheaper (or free in some tiers, assume small cost)
+              // Preview is cheaper
               setTotalCost(prevCost => prevCost + 0.01); 
 
           } catch (e) {
@@ -282,7 +317,7 @@ const App: React.FC = () => {
                       if (c.id === creative.id) {
                           return {
                               ...c,
-                              status: 'preview_ready', // Allow them to try regenerate manually or approve anyway
+                              status: 'preview_ready', // Allow user to try full generation
                               variants: {
                                   ...c.variants,
                                   [ratio]: {
@@ -308,15 +343,140 @@ const App: React.FC = () => {
   }, [objective, audienceAction, keyMessage, context, numberOfImages, aspectRatios, imageSize, styleGuideContent, attachStyleGuideDirectly, assets]);
 
 
+  // HANDLE GENERATE MORE functionality
+  const handleGenerateMore = useCallback(async () => {
+    if (!audienceAction.trim() || !keyMessage.trim()) return;
+    
+    setIsGeneratingMore(true);
+    setError(null);
+
+    try {
+        let urlSummary = urlSummaryForDisplay || "";
+        
+        // Reconstruct brief using current form state
+        let campaignBrief = `
+        - Objetivo principal de la campaña: ${objective}.
+        - Lo que queremos que la audiencia piense o haga: ${audienceAction}.
+        - Nuestro mensaje clave: ${keyMessage}.
+        `;
+        if (context.trim()) {
+            campaignBrief += `\n- Contexto adicional: ${context}.`;
+        }
+        if (urlSummary.trim()) {
+            campaignBrief += `\n- PUNTOS CLAVE EXTRAÍDOS DEL WEB: ${urlSummary}.`;
+        }
+
+        // Generate additional concepts
+        const textCreatives: AdCreativeText[] = await generateAdCreatives(
+            campaignBrief, 
+            moreCount,
+            aspectRatios,
+            styleGuideContent, 
+            assets 
+        );
+
+        const primaryRatio = aspectRatios[0];
+        
+        // Map new text creatives to AdCreative objects
+        const newCreatives: AdCreative[] = textCreatives.map((tc, index) => {
+             const variants: Record<string, AdVariant> = {};
+             aspectRatios.forEach(ratio => {
+                variants[ratio] = {
+                    aspectRatio: ratio,
+                    imagePrompt: tc.variantPrompts[ratio] || `Error: No prompt for ${ratio}`,
+                    isGenerating: ratio === primaryRatio, 
+                    history: [],
+                    currentHistoryIndex: -1,
+                };
+             });
+
+            return {
+                id: `${Date.now()}-${index}-added`, // Unique ID suffix
+                title: tc.title,
+                subtitle: tc.subtitle || tc.rationale,
+                rationale: tc.rationale,
+                variants: variants,
+                activeVariant: primaryRatio,
+                imageSize: imageSize,
+                status: 'generating_preview'
+            };
+        });
+
+        // Append to existing creatives
+        setAdCreatives(prev => prev ? [...prev, ...newCreatives] : newCreatives);
+
+        // Trigger previews for new items
+        const previewPromises = newCreatives.map(async (creative) => {
+            const ratio = primaryRatio;
+            const variant = creative.variants[ratio];
+            try {
+                const imageUrl = await generatePreviewImage(variant.imagePrompt, ratio);
+                
+                setAdCreatives(prev => {
+                    if (!prev) return null;
+                    return prev.map(c => {
+                        if (c.id === creative.id) {
+                            return {
+                                ...c,
+                                status: 'preview_ready',
+                                variants: {
+                                    ...c.variants,
+                                    [ratio]: {
+                                        ...c.variants[ratio],
+                                        history: [{ url: imageUrl, aspectRatio: ratio, isPreview: true }],
+                                        currentHistoryIndex: 0,
+                                        isGenerating: false,
+                                    }
+                                }
+                            };
+                        }
+                        return c;
+                    });
+                });
+                setTotalCost(prevCost => prevCost + 0.01); 
+            } catch (e) {
+                 console.error(`Failed to generate preview for creative ${creative.id}:`, e);
+                 setAdCreatives(prev => {
+                    if (!prev) return null;
+                    return prev.map(c => {
+                        if (c.id === creative.id) {
+                            return {
+                                ...c,
+                                status: 'preview_ready', 
+                                variants: {
+                                    ...c.variants,
+                                    [ratio]: {
+                                        ...c.variants[ratio],
+                                        isGenerating: false
+                                    }
+                                }
+                            };
+                        }
+                        return c;
+                    });
+                });
+            }
+        });
+
+        await Promise.all(previewPromises);
+
+    } catch (e) {
+        console.error(e);
+        setError(formatError(e));
+    } finally {
+        setIsGeneratingMore(false);
+    }
+}, [objective, audienceAction, keyMessage, context, moreCount, aspectRatios, imageSize, styleGuideContent, assets, urlSummaryForDisplay]);
+
+
   // Handler to Approve a Concept and Trigger Full High-Quality Generation
   const handleApproveCreative = useCallback(async (creativeId: string) => {
     const creative = adCreatives?.find(c => c.id === creativeId);
     if (!creative) return;
 
-    // Update status to full generation
+    // Update status to full generation and mark all variants as generating
     setAdCreatives(prev => prev!.map(c => {
         if (c.id === creativeId) {
-            // Mark all variants as generating
             const newVariants = { ...c.variants };
             Object.keys(newVariants).forEach(key => {
                 newVariants[key] = { ...newVariants[key], isGenerating: true };
@@ -348,15 +508,18 @@ const App: React.FC = () => {
                 if (!prev) return null;
                 return prev.map(c => {
                     if (c.id === creativeId) {
+                        const existingHistory = c.variants[ratio].history;
+                        const newImage: AdImage = { url: imageUrl, aspectRatio: ratio, isPreview: false };
+                        
                         return {
                             ...c,
                             variants: {
                                 ...c.variants,
                                 [ratio]: {
                                     ...c.variants[ratio],
-                                    image: { url: imageUrl, aspectRatio: ratio },
+                                    history: [...existingHistory, newImage],
+                                    currentHistoryIndex: existingHistory.length, // Point to new image
                                     isGenerating: false,
-                                    isPreview: false // High Quality
                                 }
                             }
                         };
@@ -368,7 +531,6 @@ const App: React.FC = () => {
 
         } catch (e) {
             console.error(`Failed to generate full quality ${ratio} for creative ${creativeId}:`, e);
-            // Handle error state for specific variant
              setAdCreatives(prev => {
                 if (!prev) return null;
                 return prev.map(c => {
@@ -440,15 +602,18 @@ const App: React.FC = () => {
       setAdCreatives(prev => 
         prev!.map(c => {
             if (c.id === id) {
+                const existingHistory = c.variants[ratio].history;
+                const newImage: AdImage = { url: newImageUrl, aspectRatio: ratio, isPreview: false };
+
                 return {
                     ...c,
                     variants: {
                         ...c.variants,
                         [ratio]: {
                             ...c.variants[ratio],
-                            image: { url: newImageUrl, aspectRatio: ratio },
-                            isGenerating: false,
-                            isPreview: false // Regenerated is always high quality
+                            history: [...existingHistory, newImage],
+                            currentHistoryIndex: existingHistory.length,
+                            isGenerating: false
                         }
                     }
                 };
@@ -475,10 +640,11 @@ const App: React.FC = () => {
     if (!targetCreative) return;
     
     const variant = targetCreative.variants[ratio];
-    if (!variant.image) return;
+    const currentImage = variant.history[variant.currentHistoryIndex];
+    if (!currentImage) return;
 
     setError(null);
-    const base64DataUrl = variant.image.url;
+    const base64DataUrl = currentImage.url;
     const match = base64DataUrl.match(/^data:(image\/.*?);base64,(.*)$/);
     if (!match) {
         setError("Formato de imagen actual no válido para la edición.");
@@ -499,15 +665,18 @@ const App: React.FC = () => {
         setAdCreatives(prev => 
             prev!.map(c => {
                 if (c.id === id) {
+                    const existingHistory = c.variants[ratio].history;
+                    const newImage: AdImage = { url: newImageUrl, aspectRatio: ratio, isPreview: false };
+
                     return {
                         ...c,
                         variants: {
                             ...c.variants,
                             [ratio]: {
                                 ...c.variants[ratio],
-                                image: { url: newImageUrl, aspectRatio: ratio },
-                                isGenerating: false,
-                                isPreview: false
+                                history: [...existingHistory, newImage],
+                                currentHistoryIndex: existingHistory.length,
+                                isGenerating: false
                             }
                         }
                     };
@@ -531,6 +700,103 @@ const App: React.FC = () => {
   const handleSetActiveVariant = useCallback((id: string, ratio: string) => {
       setAdCreatives(prev => prev ? prev.map(c => c.id === id ? { ...c, activeVariant: ratio } : c) : null);
   }, []);
+
+  const handleNavigateHistory = useCallback((id: string, ratio: string, direction: 'prev' | 'next') => {
+      setAdCreatives(prev => prev ? prev.map(c => {
+          if (c.id === id) {
+              const variant = c.variants[ratio];
+              let newIndex = variant.currentHistoryIndex;
+              if (direction === 'prev') {
+                  newIndex = Math.max(0, newIndex - 1);
+              } else {
+                  newIndex = Math.min(variant.history.length - 1, newIndex + 1);
+              }
+              return {
+                  ...c,
+                  variants: {
+                      ...c.variants,
+                      [ratio]: { ...variant, currentHistoryIndex: newIndex }
+                  }
+              };
+          }
+          return c;
+      }) : null);
+  }, []);
+
+  const handleDiscardCreative = useCallback((id: string) => {
+      setAdCreatives(prev => {
+          if (!prev) return null;
+          const remaining = prev.filter(c => c.id !== id);
+          return remaining.length > 0 ? remaining : null;
+      });
+  }, []);
+
+  const handleDownloadZip = useCallback(async (id: string) => {
+      const creative = adCreatives?.find(c => c.id === id);
+      if (!creative) return;
+
+      try {
+          const zip = new JSZip();
+          const folderName = creative.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'campaign_assets';
+          const rootFolder = zip.folder(folderName);
+          
+          if (!rootFolder) return;
+
+          // Add text info
+          const textContent = `
+TITLE: ${creative.title}
+SUBTITLE: ${creative.subtitle}
+
+RATIONALE:
+${creative.rationale}
+
+----------------------------------------
+
+PROMPTS USED:
+${Object.entries(creative.variants).map(([ratio, variant]) => `
+[${ratio}]
+${variant.imagePrompt}
+`).join('\n')}
+          `.trim();
+          
+          rootFolder.file('concept_info.txt', textContent);
+
+          // Add images
+          const imagesFolder = rootFolder.folder('images');
+          if (imagesFolder) {
+              Object.entries(creative.variants).forEach(([ratio, variant]) => {
+                  const currentImage = variant.history[variant.currentHistoryIndex];
+                  if (currentImage && currentImage.url.startsWith('data:image')) {
+                      // Extract base64
+                      const matches = currentImage.url.match(/^data:image\/(.*?);base64,(.*)$/);
+                      if (matches) {
+                          const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+                          const data = matches[2];
+                          const filename = `${ratio.replace(':', '-')}.${ext}`;
+                          imagesFolder.file(filename, data, { base64: true });
+                      }
+                  }
+              });
+          }
+
+          // Generate zip
+          const content = await zip.generateAsync({ type: 'blob' });
+          const url = URL.createObjectURL(content);
+          
+          // Trigger download
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${folderName}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+
+      } catch (err) {
+          console.error("Error zipping assets:", err);
+          setError("Error al comprimir los archivos.");
+      }
+  }, [adCreatives]);
 
   const handleGoBack = () => {
     setAdCreatives(null);
@@ -601,7 +867,31 @@ const App: React.FC = () => {
             if (!data.adCreatives || !data.formState || typeof data.totalCost === 'undefined') {
                 throw new Error("El archivo de importación no es válido.");
             }
-            setAdCreatives(data.adCreatives);
+            // Migration logic on import as well
+            const migratedCreatives = data.adCreatives.map((c: any) => {
+                const migratedVariants: Record<string, AdVariant> = {};
+                Object.keys(c.variants).forEach(key => {
+                    const v = c.variants[key];
+                    if (v.image && (!v.history || v.history.length === 0)) {
+                        migratedVariants[key] = {
+                            ...v,
+                            history: [{ ...v.image, isPreview: false }],
+                            currentHistoryIndex: 0
+                        };
+                    } else if (!v.history) {
+                         migratedVariants[key] = {
+                            ...v,
+                            history: [],
+                            currentHistoryIndex: -1
+                        };
+                    } else {
+                        migratedVariants[key] = v;
+                    }
+                });
+                return { ...c, variants: migratedVariants, status: c.status || 'completed' };
+            });
+
+            setAdCreatives(migratedCreatives);
             setTotalCost(data.totalCost);
             setUrlSummaryForDisplay(data.urlSummaryForDisplay || null);
             const { objective, audienceAction, keyMessage, context, aspectRatios, imageSize, numberOfImages, styleGuideContent, attachStyleGuideDirectly, assets } = data.formState;
@@ -696,17 +986,50 @@ const App: React.FC = () => {
             setAssets={setAssets}
             />
         ) : (
-          <div className="w-full max-w-4xl mx-auto grid grid-cols-1 gap-12">
-            {adCreatives.map(creative => (
-              <AdDisplay 
-                key={creative.id} 
-                creative={creative} 
-                onRegenerate={handleRegenerateVariant} 
-                onEdit={handleEditVariant}
-                onSetActiveVariant={handleSetActiveVariant}
-                onApprove={handleApproveCreative} // Pass approval handler
-              />
-            ))}
+          <div className="w-full max-w-4xl mx-auto flex flex-col gap-12">
+            <div className="grid grid-cols-1 gap-12">
+                {adCreatives.map(creative => (
+                <AdDisplay 
+                    key={creative.id} 
+                    creative={creative} 
+                    onRegenerate={handleRegenerateVariant} 
+                    onEdit={handleEditVariant}
+                    onSetActiveVariant={handleSetActiveVariant}
+                    onApprove={handleApproveCreative}
+                    onNavigateHistory={handleNavigateHistory}
+                    onDiscard={handleDiscardCreative}
+                    onDownloadZip={handleDownloadZip}
+                />
+                ))}
+            </div>
+
+            {/* Generate More Section */}
+            <div className="bg-slate-800/40 border border-slate-700 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center space-y-4">
+                <h3 className="text-xl font-semibold text-slate-200">¿Necesitas más opciones?</h3>
+                <p className="text-slate-400 max-w-md">Genera conceptos adicionales usando la misma información del formulario.</p>
+                
+                <div className="flex items-center gap-4 bg-slate-900/50 p-2 rounded-lg border border-slate-700">
+                    <span className="text-sm text-slate-300 pl-2">Cantidad:</span>
+                    <select 
+                        value={moreCount} 
+                        onChange={(e) => setMoreCount(Number(e.target.value))}
+                        className="bg-slate-800 text-white border border-slate-600 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                        disabled={isGeneratingMore}
+                    >
+                        <option value={1}>1</option>
+                        <option value={2}>2</option>
+                        <option value={3}>3</option>
+                    </select>
+                    <button 
+                        onClick={handleGenerateMore}
+                        disabled={isGeneratingMore}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-6 rounded-md transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isGeneratingMore ? <Spinner className="w-4 h-4"/> : <Icon name="sparkles" className="w-4 h-4"/>}
+                        Generar Más
+                    </button>
+                </div>
+            </div>
           </div>
         )}
 

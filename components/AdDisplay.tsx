@@ -10,6 +10,9 @@ interface AdDisplayProps {
   onEdit: (id: string, ratio: string, editPrompt: string, imageSize: string) => void;
   onSetActiveVariant: (id: string, ratio: string) => void;
   onApprove?: (id: string) => void;
+  onNavigateHistory?: (id: string, ratio: string, direction: 'prev' | 'next') => void;
+  onDiscard?: (id: string) => void;
+  onDownloadZip?: (id: string) => void;
 }
 
 const getAspectRatioClass = (ratio: string) => {
@@ -24,10 +27,15 @@ const getAspectRatioClass = (ratio: string) => {
     }
 };
 
-const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, onSetActiveVariant, onApprove }) => {
+const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, onSetActiveVariant, onApprove, onNavigateHistory, onDiscard, onDownloadZip }) => {
   const activeVariantKey = creative.activeVariant;
   const activeVariant = creative.variants[activeVariantKey];
+  
+  // Use history to determine current image
+  const currentImage = activeVariant?.history[activeVariant.currentHistoryIndex];
+  
   const isPreviewMode = creative.status === 'preview_ready' || creative.status === 'generating_preview';
+  const isImagePreview = currentImage?.isPreview; // Is the specifically displayed image a preview?
 
   const [promptContent, setPromptContent] = useState(activeVariant?.imagePrompt || '');
   const [imageSize, setImageSize] = useState(creative.imageSize || '1K');
@@ -55,8 +63,6 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
 
   if (!activeVariant) return null;
 
-  const currentImageUrl = activeVariant.image?.url;
-
   return (
     <div className={`bg-slate-800/60 backdrop-blur-md border rounded-xl overflow-hidden shadow-lg transition-all duration-300 hover:shadow-indigo-500/20 flex flex-col md:flex-row h-auto min-h-[600px] ${isPreviewMode ? 'border-amber-500/50' : 'border-slate-700 hover:border-slate-600'}`}>
       
@@ -64,8 +70,9 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
       <div className="md:w-1/2 lg:w-3/5 bg-slate-900 flex flex-col border-b md:border-b-0 md:border-r border-slate-700 relative">
         
         {/* Preview Badge */}
-        {activeVariant.isPreview && (
-             <div className="absolute top-0 left-0 z-20 bg-amber-500 text-black text-xs font-bold px-3 py-1 rounded-br-lg shadow-md">
+        {isImagePreview && (
+             <div className="absolute top-0 left-0 z-20 bg-amber-500 text-black text-xs font-bold px-3 py-1 rounded-br-lg shadow-md flex items-center gap-1">
+                 <Icon name="sparkles" className="w-3 h-3" />
                  PREVIEW (Imagen 4)
              </div>
         )}
@@ -73,15 +80,17 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
         {/* Tabs for Aspect Ratios */}
         <div className="flex border-b border-slate-700 bg-slate-900 overflow-x-auto scrollbar-hide">
             {availableRatios.map(ratio => {
-                // Determine if tab should be disabled
-                const isTabDisabled = isPreviewMode && !creative.variants[ratio].image && !creative.variants[ratio].isGenerating;
+                // Determine if tab should be disabled: In preview mode, only allow tabs that have data or are generating
+                const variant = creative.variants[ratio];
+                const hasHistory = variant.history && variant.history.length > 0;
+                const isTabDisabled = isPreviewMode && !hasHistory && !variant.isGenerating;
                 
                 return (
                     <button
                         key={ratio}
                         onClick={() => !isTabDisabled && onSetActiveVariant(creative.id, ratio)}
                         disabled={isTabDisabled}
-                        className={`flex-1 py-3 px-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap
+                        className={`flex-1 py-3 px-4 text-sm font-medium transition-colors border-b-2 whitespace-nowrap relative
                             ${activeVariantKey === ratio 
                                 ? 'border-indigo-500 text-white bg-slate-800' 
                                 : isTabDisabled
@@ -90,6 +99,7 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
                             }`}
                     >
                         {ratio}
+                        {isTabDisabled && <span className="absolute top-1 right-2 text-[8px] text-amber-500">🔒</span>}
                     </button>
                 );
             })}
@@ -97,22 +107,64 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
 
         {/* Main Image Viewport */}
         <div className="flex-grow flex items-center justify-center p-4 md:p-8 relative min-h-[400px]">
-            <div className={`relative w-full max-w-full h-auto shadow-2xl ${getAspectRatioClass(activeVariantKey)}`}>
+            <div className={`relative w-full max-w-full h-auto shadow-2xl ${getAspectRatioClass(activeVariantKey)} group`}>
+                
+                {/* Generation Spinner Overlay */}
                 {activeVariant.isGenerating && (
                 <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center z-10 rounded-lg">
                     <Spinner className="w-10 h-10" />
                     <p className="text-slate-300 mt-2 text-sm font-medium animate-pulse">
-                        {isPreviewMode ? 'Generando Preview (Imagen 4)...' : `Diseñando para ${activeVariantKey}...`}
+                        {isPreviewMode && activeVariantKey === creative.activeVariant ? 'Generando Preview (Imagen 4)...' : `Diseñando para ${activeVariantKey}...`}
                     </p>
                 </div>
                 )}
-                {currentImageUrl ? (
-                    <img src={currentImageUrl} alt={creative.title} className="w-full h-full object-contain bg-slate-950 rounded-lg" />
+                
+                {/* Image Display */}
+                {currentImage ? (
+                    <>
+                        <img src={currentImage.url} alt={creative.title} className="w-full h-full object-contain bg-slate-950 rounded-lg" />
+                        
+                        {/* Carousel Navigation Buttons */}
+                        {activeVariant.history.length > 1 && (
+                            <>
+                                <button 
+                                    onClick={() => onNavigateHistory && onNavigateHistory(creative.id, activeVariantKey, 'prev')}
+                                    disabled={activeVariant.currentHistoryIndex === 0}
+                                    className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/80 text-white p-2 rounded-full disabled:opacity-30 transition-all opacity-0 group-hover:opacity-100"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                                    </svg>
+                                </button>
+                                <button 
+                                    onClick={() => onNavigateHistory && onNavigateHistory(creative.id, activeVariantKey, 'next')}
+                                    disabled={activeVariant.currentHistoryIndex === activeVariant.history.length - 1}
+                                    className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/80 text-white p-2 rounded-full disabled:opacity-30 transition-all opacity-0 group-hover:opacity-100"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                                    </svg>
+                                </button>
+                                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/60 px-3 py-1 rounded-full text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                    Versión {activeVariant.currentHistoryIndex + 1} / {activeVariant.history.length}
+                                </div>
+                            </>
+                        )}
+                    </>
                 ) : (
                      !activeVariant.isGenerating && (
-                         <div className="w-full h-full bg-slate-800 rounded-lg flex items-center justify-center flex-col gap-2 text-slate-500 text-sm">
-                             <span className="text-2xl">⏳</span>
-                             <span>Esperando generación...</span>
+                         <div className="w-full h-full bg-slate-800 rounded-lg flex items-center justify-center flex-col gap-2 text-slate-500 text-sm p-4 text-center">
+                             {isPreviewMode ? (
+                                 <>
+                                     <span className="text-2xl">🔒</span>
+                                     <span>Aprueba el preview para generar este formato.</span>
+                                 </>
+                             ) : (
+                                 <>
+                                     <span className="text-2xl">⏳</span>
+                                     <span>Esperando generación...</span>
+                                 </>
+                             )}
                          </div>
                      )
                 )}
@@ -122,9 +174,31 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
 
       {/* Right Column: Controls */}
       <div className="md:w-1/2 lg:w-2/5 flex flex-col bg-slate-800/50">
-          <div className="p-6 border-b border-slate-700">
-            <h3 className="text-xl font-bold text-slate-100 mb-1">{creative.title}</h3>
-            <p className="text-slate-400 text-sm">{creative.subtitle}</p>
+          <div className="p-6 border-b border-slate-700 flex justify-between items-start gap-4">
+            <div>
+                <h3 className="text-xl font-bold text-slate-100 mb-1">{creative.title}</h3>
+                <p className="text-slate-400 text-sm">{creative.subtitle}</p>
+            </div>
+            <div className="flex gap-2">
+                {onDownloadZip && (
+                    <button
+                        onClick={() => onDownloadZip(creative.id)}
+                        className="text-slate-500 hover:text-indigo-400 transition-colors p-1"
+                        title="Descargar ZIP (Texto + Imágenes)"
+                    >
+                        <Icon name="download" className="w-5 h-5" />
+                    </button>
+                )}
+                {onDiscard && (
+                    <button
+                        onClick={() => onDiscard(creative.id)}
+                        className="text-slate-500 hover:text-red-400 transition-colors p-1"
+                        title="Descartar concepto"
+                    >
+                        <Icon name="trash" className="w-5 h-5" />
+                    </button>
+                )}
+            </div>
           </div>
 
           <div className="p-6 flex-grow flex flex-col space-y-6 overflow-y-auto">
@@ -137,7 +211,7 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
                          Modo Vista Previa
                     </h4>
                     <p className="text-slate-300 text-xs mb-4">
-                        Este es un borrador rápido generado con Imagen 4. Si te gusta el concepto, aprruébalo para generar todos los formatos en Alta Calidad con Gemini 3 Pro.
+                        Este es un borrador rápido generado con Imagen 4. Si te gusta el concepto, apruébalo para generar todos los formatos en Alta Calidad con Gemini 3 Pro.
                     </p>
                     <button
                         onClick={() => onApprove && onApprove(creative.id)}
@@ -166,7 +240,7 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
             </div>
 
             {/* Regeneration Controls */}
-            {(!isPreviewMode) && (
+            {(!isPreviewMode || (isPreviewMode && activeVariant.history.length > 0)) && (
                 <div className="space-y-4">
                     <div>
                         <label htmlFor={`image-size-${creative.id}`} className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Resolución</label>
@@ -189,7 +263,7 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
                         className="w-full flex items-center justify-center gap-2 bg-slate-700 text-slate-200 font-medium py-2.5 px-4 rounded-lg hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed transition-all duration-200"
                     >
                         <Icon name="regenerate" className="w-5 h-5"/>
-                        Regenerar Variante {activeVariantKey}
+                        {isPreviewMode ? 'Regenerar Preview' : `Regenerar Variante ${activeVariantKey}`}
                     </button>
                 </div>
             )}
@@ -206,11 +280,11 @@ const AdDisplay: React.FC<AdDisplayProps> = ({ creative, onRegenerate, onEdit, o
                             onChange={(e) => setEditPrompt(e.target.value)}
                             className="flex-grow bg-slate-700 text-slate-200 text-sm p-3 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none placeholder:text-slate-500 resize-none overflow-hidden"
                             placeholder="Ej: Haz el texto rojo..."
-                            disabled={activeVariant.isGenerating || !activeVariant.image}
+                            disabled={activeVariant.isGenerating || !currentImage}
                         />
                         <button
                             onClick={handleEditClick}
-                            disabled={activeVariant.isGenerating || !editPrompt.trim() || !activeVariant.image}
+                            disabled={activeVariant.isGenerating || !editPrompt.trim() || !currentImage}
                             className="bg-indigo-600 text-white p-3 rounded-lg hover:bg-indigo-700 disabled:bg-slate-700 disabled:text-slate-500 transition-colors"
                             title="Aplicar cambios"
                         >

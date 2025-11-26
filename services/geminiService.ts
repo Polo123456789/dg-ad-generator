@@ -67,7 +67,8 @@ export async function generateAdCreatives(
     
     Tu tarea es diseñar ${numberOfCreatives} conceptos de anuncios visuales completos basados en el brief del cliente.
     
-    Para CADA CONCEPTO, debes generar adaptaciones para los siguientes formatos: ${targetRatios.join(', ')}. El concenpto tiene que ser el mismo (mismo fondo, mismo texto, mismas personas/perros, etc), unicamente tienes que cambiar la composicion para que se vea natural en cada formato.
+    Para CADA CONCEPTO, debes generar adaptaciones para los siguientes formatos: ${targetRatios.join(', ')}.
+    El concenpto tiene que ser el exactamente el mismo (mismo fondo, mismo texto, mismas personas/perros, etc), unicamente tienes que cambiar el orden para que se vea bien en cada formato.
     
     IMPORTANTE: La composición debe cambiar según el formato y el uso
     - 9:16 (Stories/Reels): Vertical. Texto arriba o abajo. Deja espacio central.
@@ -184,9 +185,6 @@ export async function generatePreviewImage(
 ): Promise<string> {
   const ai = getAI();
   
-  // Clean prompt slightly for Imagen (remove internal instructional text if too heavy, but Imagen is robust)
-  // We'll pass the full prompt for now as it contains the visual description.
-  
   try {
     const response = await ai.models.generateImages({
       model: previewModel,
@@ -194,11 +192,10 @@ export async function generatePreviewImage(
       config: {
         numberOfImages: 1,
         outputMimeType: 'image/jpeg',
-        aspectRatio: aspectRatio, // Supports "1:1", "16:9", "9:16", "3:4", "4:3"
+        aspectRatio: aspectRatio, 
       }
     });
 
-    // Imagen response format extraction
     const base64ImageBytes: string = response.generatedImages[0].image.imageBytes;
     return `data:image/jpeg;base64,${base64ImageBytes}`;
 
