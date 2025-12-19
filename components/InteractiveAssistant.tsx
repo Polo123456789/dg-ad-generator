@@ -5,6 +5,8 @@ import { createInteractiveChat } from '../services/geminiService';
 import type { ChatMessage } from '../types';
 import Spinner from './Spinner';
 import Icon from './Icon';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 
 interface InteractiveAssistantProps {
     onClose: () => void;
@@ -15,6 +17,21 @@ interface InteractiveAssistantProps {
         context?: string;
     }) => void;
 }
+
+// Componente para renderizar el texto con formato Markdown de forma segura
+const FormattedMessage: React.FC<{ text: string; isUser: boolean }> = ({ text, isUser }) => {
+    if (isUser) return <>{text}</>;
+
+    const htmlContent = marked.parse(text);
+    const sanitizedHtml = DOMPurify.sanitize(htmlContent as string);
+
+    return (
+        <div 
+            className="prose-chat"
+            dangerouslySetInnerHTML={{ __html: sanitizedHtml }} 
+        />
+    );
+};
 
 const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, onUpdateFields }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -34,7 +51,7 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
             chatSessionRef.current = createInteractiveChat();
             setIsTyping(true);
             try {
-                // Initial greeting trigger (empty message to start flow or explicit prompt)
+                // Initial greeting trigger
                 const response: GenerateContentResponse = await chatSessionRef.current.sendMessage({
                     message: "Hola, empecemos." 
                 });
@@ -67,7 +84,6 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
             });
 
             // Handle Function Calls (Tools) loop
-            // The model might want to call a function. We must execute it and send the result back.
             let functionCalls = response.functionCalls;
             
             while (functionCalls && functionCalls.length > 0) {
@@ -77,7 +93,6 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
                     if (call.name === 'update_form_fields') {
                         // Execute UI Update
                         const args = call.args as any;
-                        console.log("Assistant updating fields:", args);
                         onUpdateFields(args);
                         
                         // Prepare response for model
@@ -89,14 +104,10 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
                     }
                 }
 
-                // Send tool execution result back to Gemini
                 if (functionResponses.length > 0) {
-                     // IMPORTANT: When sending function responses, we send the parts array directly
-                     // or wrapped in the message property correctly as Part[].
                      response = await chatSessionRef.current.sendMessage({
                          message: functionResponses.map(fr => ({ functionResponse: fr })) 
                      });
-                     // Check if new response has more function calls or text
                      functionCalls = response.functionCalls;
                 } else {
                     functionCalls = undefined;
@@ -133,7 +144,7 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
                          </div>
                          <div>
                              <h3 className="font-bold text-white">Asistente Creativo</h3>
-                             <p className="text-xs text-indigo-300">Modo Interactivo (Gemini 2.5)</p>
+                             <p className="text-xs text-indigo-300">Modo Interactivo (Gemini 3)</p>
                          </div>
                     </div>
                     <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
@@ -147,21 +158,21 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
                 <div className="flex-grow overflow-y-auto p-4 space-y-4 bg-slate-900/50">
                     {messages.map((msg, idx) => (
                         <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                            <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                                 msg.role === 'user' 
-                                ? 'bg-indigo-600 text-white rounded-br-none' 
-                                : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-bl-none'
+                                ? 'bg-indigo-600 text-white rounded-br-none shadow-md' 
+                                : 'bg-slate-800 text-slate-200 border border-slate-700 rounded-bl-none shadow-sm'
                             }`}>
-                                {msg.text}
+                                <FormattedMessage text={msg.text} isUser={msg.role === 'user'} />
                             </div>
                         </div>
                     ))}
                     {isTyping && (
                          <div className="flex justify-start">
                             <div className="bg-slate-800 border border-slate-700 rounded-2xl rounded-bl-none px-4 py-3 flex items-center gap-1">
-                                <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce"></span>
-                                <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce delay-75"></span>
-                                <span className="w-2 h-2 bg-slate-500 rounded-full animate-bounce delay-150"></span>
+                                <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce"></span>
+                                <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce delay-75"></span>
+                                <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce delay-150"></span>
                             </div>
                         </div>
                     )}
@@ -182,15 +193,15 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
                         <button 
                             onClick={handleSendMessage}
                             disabled={!inputValue.trim() || isTyping}
-                            className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white p-2 rounded-lg transition-colors"
+                            className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white p-2 rounded-lg transition-colors flex-shrink-0"
                         >
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                                 <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
                             </svg>
                         </button>
                     </div>
-                    <p className="text-center text-xs text-slate-500 mt-2">
-                        El asistente actualizará el formulario automáticamente. No olvides adjuntar tus imágenes al final.
+                    <p className="text-center text-[10px] text-slate-500 mt-2 uppercase tracking-wider font-semibold">
+                        El asistente actualizará el formulario automáticamente.
                     </p>
                 </div>
             </div>

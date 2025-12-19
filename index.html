@@ -14,10 +14,40 @@
     "react": "https://esm.sh/react@^19.1.1",
     "react-dom/": "https://esm.sh/react-dom@^19.1.1/",
     "@google/genai": "https://esm.sh/@google/genai@^1.11.0",
-    "jszip": "https://esm.sh/jszip@3.10.1"
+    "jszip": "https://esm.sh/jszip@3.10.1",
+    "marked": "https://esm.sh/marked@15.0.0",
+    "dompurify": "https://esm.sh/dompurify@3.2.4"
   }
 }
 </script>
+<style>
+  /* Estilos para el contenido Markdown dentro del asistente */
+  .prose-chat strong {
+    color: white;
+    font-weight: 700;
+  }
+  .prose-chat ul {
+    list-style-type: disc;
+    margin-left: 1.25rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .prose-chat ol {
+    list-style-type: decimal;
+    margin-left: 1.25rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .prose-chat li {
+    margin-bottom: 0.25rem;
+  }
+  .prose-chat p {
+    margin-bottom: 0.5rem;
+  }
+  .prose-chat p:last-child {
+    margin-bottom: 0;
+  }
+</style>
 </head>
   <body class="bg-slate-900">
     <div id="root"></div>

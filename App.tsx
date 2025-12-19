@@ -120,7 +120,8 @@ const App: React.FC = () => {
                 const migratedCreatives = data.adCreatives.map((c: any) => {
                     const migratedVariants: Record<string, AdVariant> = {};
                     Object.keys(c.variants).forEach(key => {
-                        const v = c.variants[key];
+                        // Fix: Explicitly cast to any to avoid "unknown" type errors during migration property access
+                        const v = (c.variants as any)[key];
                         // If it has 'image' but no 'history', migrate it
                         if (v.image && (!v.history || v.history.length === 0)) {
                             migratedVariants[key] = {
@@ -871,7 +872,8 @@ ${variant.imagePrompt}
             const migratedCreatives = data.adCreatives.map((c: any) => {
                 const migratedVariants: Record<string, AdVariant> = {};
                 Object.keys(c.variants).forEach(key => {
-                    const v = c.variants[key];
+                    // Fix: Explicitly cast to any to avoid "unknown" type errors during migration property access
+                    const v = (c.variants as any)[key];
                     if (v.image && (!v.history || v.history.length === 0)) {
                         migratedVariants[key] = {
                             ...v,
