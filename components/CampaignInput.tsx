@@ -91,15 +91,12 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
     }
   };
 
-  // Asset Handling Logic
   const processAssetFile = (file: File) => {
     if (!file.type.startsWith('image/')) return;
-
     const reader = new FileReader();
     reader.onload = (e) => {
       const result = e.target?.result as string;
       const base64Data = result.split(',')[1];
-      
       const newAsset: Asset = {
         id: Date.now().toString() + Math.random().toString(),
         data: base64Data,
@@ -107,7 +104,6 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
         name: file.name,
         previewUrl: result
       };
-
       setAssets(prev => [...prev, newAsset]);
     };
     reader.readAsDataURL(file);
@@ -117,7 +113,6 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
     if (e.target.files) {
       Array.from(e.target.files).forEach(processAssetFile);
     }
-    // Reset input so same files can be selected again
     if (assetInputRef.current) assetInputRef.current.value = '';
   };
 
@@ -137,7 +132,6 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
 
   const toggleAspectRatio = (ratio: string) => {
       if (aspectRatios.includes(ratio)) {
-          // Prevent removing the last one
           if (aspectRatios.length > 1) {
               setAspectRatios(aspectRatios.filter(r => r !== ratio));
           }
@@ -146,7 +140,6 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
       }
   };
 
-  // Drag and Drop
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -176,9 +169,7 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
       if (fields.audienceAction) setAudienceAction(fields.audienceAction);
       if (fields.keyMessage) setKeyMessage(fields.keyMessage);
       if (fields.context) {
-          // Ensure we append to existing context if present, or just set it
-          const newContext = context && context.trim() !== '' ? `${context}\n${fields.context}` : fields.context;
-          setContext(newContext);
+          setContext(fields.context);
       }
   };
 
@@ -189,17 +180,20 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
 
   return (
     <div className="w-full max-w-3xl mx-auto">
-      {/* Interactive Mode Modal */}
       {showInteractiveMode && (
           <InteractiveAssistant 
             onClose={() => setShowInteractiveMode(false)}
             onUpdateFields={handleAssistantUpdate}
+            initialFormState={{
+                objective,
+                audienceAction,
+                keyMessage,
+                context
+            }}
           />
       )}
 
       <form onSubmit={handleSubmit} className="bg-slate-800/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6 md:p-8 shadow-2xl shadow-slate-950/50 space-y-6 relative">
-        
-        {/* Interactive Mode Banner */}
         <div className="absolute top-0 right-0 p-6 md:p-8">
              <button
                 type="button"
@@ -332,7 +326,7 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
                 onDrop={handleDrop}
                 onPaste={handlePaste}
                 onClick={() => !isLoading && assetInputRef.current?.click()}
-                tabIndex={0} // Makes div focusable for paste events
+                tabIndex={0}
             >
                  <input 
                     id="assets-upload"

@@ -16,15 +16,18 @@ interface InteractiveAssistantProps {
         keyMessage?: string;
         context?: string;
     }) => void;
+    initialFormState: {
+        objective: string;
+        audienceAction: string;
+        keyMessage: string;
+        context: string;
+    };
 }
 
-// Componente para renderizar el texto con formato Markdown de forma segura
 const FormattedMessage: React.FC<{ text: string; isUser: boolean }> = ({ text, isUser }) => {
     if (isUser) return <>{text}</>;
-
     const htmlContent = marked.parse(text);
     const sanitizedHtml = DOMPurify.sanitize(htmlContent as string);
-
     return (
         <div 
             className="prose-chat"
@@ -33,27 +36,27 @@ const FormattedMessage: React.FC<{ text: string; isUser: boolean }> = ({ text, i
     );
 };
 
-const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, onUpdateFields }) => {
+const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, onUpdateFields, initialFormState }) => {
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [isTyping, setIsTyping] = useState(false);
+    const [lastUpdateInfo, setLastUpdateInfo] = useState<string | null>(null);
     const chatSessionRef = useRef<Chat | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
-    // Scroll to bottom
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    // Initialize Chat
+    // IMPORTANTE: Inicializar solo una vez al montar para evitar reinicios de sesión
     useEffect(() => {
         const initChat = async () => {
-            chatSessionRef.current = createInteractiveChat();
+            // Usamos el estado inicial proporcionado al abrir el asistente
+            chatSessionRef.current = createInteractiveChat(initialFormState);
             setIsTyping(true);
             try {
-                // Initial greeting trigger
                 const response: GenerateContentResponse = await chatSessionRef.current.sendMessage({
-                    message: "Hola, empecemos." 
+                    message: "Hola, analicemos la campaña." 
                 });
                 
                 if (response.text) {
@@ -68,7 +71,7 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
         };
 
         initChat();
-    }, []);
+    }, []); // Array vacío para que solo se ejecute al montar
 
     const handleSendMessage = async () => {
         if (!inputValue.trim() || !chatSessionRef.current) return;
@@ -77,29 +80,30 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
         setInputValue('');
         setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
         setIsTyping(true);
+        setLastUpdateInfo(null);
 
         try {
             let response: GenerateContentResponse = await chatSessionRef.current.sendMessage({
                 message: userMsg
             });
 
-            // Handle Function Calls (Tools) loop
             let functionCalls = response.functionCalls;
-            
             while (functionCalls && functionCalls.length > 0) {
                 const functionResponses = [];
-                
                 for (const call of functionCalls) {
                     if (call.name === 'update_form_fields') {
-                        // Execute UI Update
                         const args = call.args as any;
                         onUpdateFields(args);
                         
-                        // Prepare response for model
+                        // Notificar qué se actualizó
+                        const updatedFields = Object.keys(args).join(', ');
+                        setLastUpdateInfo(`Actualizado: ${updatedFields}`);
+                        setTimeout(() => setLastUpdateInfo(null), 3000);
+
                         functionResponses.push({
                             id: call.id,
                             name: call.name,
-                            response: { result: "success: fields updated in UI" }
+                            response: { result: "success: fields updated in the interface" }
                         });
                     }
                 }
@@ -117,7 +121,6 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
             if (response.text) {
                 setMessages(prev => [...prev, { role: 'model', text: response.text }]);
             }
-
         } catch (error) {
             console.error("Chat error:", error);
             setMessages(prev => [...prev, { role: 'model', text: "Hubo un error de conexión. ¿Podrías repetir eso?" }]);
@@ -136,7 +139,6 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <div className="bg-slate-900 border border-slate-700 w-full max-w-lg h-[600px] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-fade-in-up">
-                {/* Header */}
                 <div className="bg-gradient-to-r from-indigo-900 to-slate-900 p-4 border-b border-slate-700 flex justify-between items-center">
                     <div className="flex items-center gap-3">
                          <div className="bg-indigo-500 rounded-full p-1.5">
@@ -154,8 +156,17 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
                     </button>
                 </div>
 
-                {/* Messages Area */}
-                <div className="flex-grow overflow-y-auto p-4 space-y-4 bg-slate-900/50">
+                <div className="flex-grow overflow-y-auto p-4 space-y-4 bg-slate-900/50 relative">
+                    {/* Alerta de actualización */}
+                    {lastUpdateInfo && (
+                        <div className="sticky top-0 z-10 flex justify-center animate-bounce">
+                            <div className="bg-green-600/90 text-white text-xs px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 backdrop-blur-md border border-green-500">
+                                <Icon name="sparkles" className="w-3 h-3" />
+                                {lastUpdateInfo}
+                            </div>
+                        </div>
+                    )}
+
                     {messages.map((msg, idx) => (
                         <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                             <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
@@ -179,7 +190,6 @@ const InteractiveAssistant: React.FC<InteractiveAssistantProps> = ({ onClose, on
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input Area */}
                 <div className="p-4 bg-slate-800 border-t border-slate-700">
                     <div className="flex items-end gap-2 bg-slate-900 border border-slate-600 rounded-xl p-2 focus-within:ring-2 focus-within:ring-indigo-500 transition-all">
                         <textarea

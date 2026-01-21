@@ -48,7 +48,6 @@ export async function summarizeUrlContent(contextWithUrls: string): Promise<stri
 
 /**
  * Genera conceptos de anuncios y redacta el PROMPT MAESTRO para Gemini 3 Pro.
- * Ahora actúa como un Director Creativo que da instrucciones precisas de montaje.
  */
 export async function generateAdCreatives(
     campaignBrief: string, 
@@ -59,7 +58,6 @@ export async function generateAdCreatives(
 ): Promise<AdCreativeText[]> {
   const ai = getAI();
 
-  // Construir lista de nombres de assets para referencia textual
   const assetNames = assets?.map(a => `"${a.name}"`).join(', ') || "No se adjuntaron archivos específicos.";
 
   const prompt = `
@@ -70,18 +68,13 @@ export async function generateAdCreatives(
     Para CADA CONCEPTO, debes generar adaptaciones para los siguientes formatos: ${targetRatios.join(', ')}.
     El concenpto tiene que ser el exactamente el mismo (mismo fondo, mismo texto, mismas personas/perros, etc), unicamente tienes que cambiar el orden para que se vea bien en cada formato.
     
-    IMPORTANTE: La composición debe cambiar según el formato y el uso
-    - 9:16 (Stories/Reels): Vertical. Texto arriba o abajo. Deja espacio central.
-    - 16:9 (Youtube): Horizontal. Texto a los lados.
-    - 1:1 (Feed): Cuadrado. Composición centrada.
-    
     REGLAS OBLIGATORIAS:
     1. He adjuntado las imágenes de los assets. Analízalos.
     2. Assets disponibles: ${assetNames}.
     3. En tus prompts, indica explícitamente dónde colocar cada asset.
     4. El 'gemini3Prompt' debe ser una instrucción detallada y estructurada para la IA de imagen. 
     
-    EJEMPLO DE ESTRUCTURA DEL 'gemini3Prompt' (Úsalo como referencia de calidad):
+    EJEMPLO DE ESTRUCTURA DEL 'gemini3Prompt':
     ---
     Concepto: [Nombre del concepto]
     Prompt Visual: Vertical 3:4 shot. Fondo elegante y oscuro. Primer plano de una mano acariciando un perro. Iluminación cinemática.
@@ -93,16 +86,12 @@ export async function generateAdCreatives(
     - Assets: Integra el asset visual adjunto '${assets?.[0]?.name || 'asset'}' de forma natural en la composición.
     ---
     
-    IMPORTANTE FORMATO:
-    Usa saltos de línea explícitos para separar secciones (Concepto, Visual, Montaje).
-    
     BRIEF DE CAMPAÑA:
     ${campaignBrief}
 
     ${styleGuide ? `\nGUÍA DE ESTILO APLICABLE:\n${styleGuide}` : ''}
   `;
   
-  // Dynamically build schema properties for the requested ratios
   const variantPromptsProperties: Record<string, any> = {};
   targetRatios.forEach(ratio => {
       variantPromptsProperties[ratio] = {
@@ -138,10 +127,7 @@ export async function generateAdCreatives(
     }
   };
 
-  // Construir el contenido multimodal (Texto + Imágenes)
   const parts: any[] = [];
-
-  // 1. Añadir las imágenes primero para que el modelo las analice
   if (assets) {
       assets.forEach(asset => {
           parts.push({
@@ -152,8 +138,6 @@ export async function generateAdCreatives(
           });
       });
   }
-
-  // 2. Añadir el prompt de texto
   parts.push({ text: prompt });
 
   try {
@@ -175,16 +159,11 @@ export async function generateAdCreatives(
   }
 }
 
-/**
- * Genera una imagen de PREVIEW rápida usando Imagen 4.
- * Es más rápido y barato que Gemini 3 Pro.
- */
 export async function generatePreviewImage(
   prompt: string,
   aspectRatio: string
 ): Promise<string> {
   const ai = getAI();
-  
   try {
     const response = await ai.models.generateImages({
       model: previewModel,
@@ -195,20 +174,14 @@ export async function generatePreviewImage(
         aspectRatio: aspectRatio, 
       }
     });
-
     const base64ImageBytes: string = response.generatedImages[0].image.imageBytes;
     return `data:image/jpeg;base64,${base64ImageBytes}`;
-
   } catch (error) {
     console.error("Error generando preview con Imagen 4:", error);
     throw error;
   }
 }
 
-/**
- * Genera la imagen final usando Gemini 3 Pro.
- * Ahora recibe el prompt maestro diseñado por Flash y los assets binarios.
- */
 export async function generateAdImage(
     gemini3Prompt: string, 
     aspectRatio: string, 
@@ -216,11 +189,7 @@ export async function generateAdImage(
     assets?: Asset[]
 ): Promise<string> {
     const ai = getAI();
-    
-    const finalPrompt = `${gemini3Prompt}`;
-
     const parts: any[] = [];
-
     if (assets) {
         assets.forEach(asset => {
             parts.push({
@@ -231,15 +200,11 @@ export async function generateAdImage(
             });
         });
     }
-
-    parts.push({ text: finalPrompt });
-
+    parts.push({ text: gemini3Prompt });
     try {
         const response = await ai.models.generateContent({
             model: imageModel,
-            contents: {
-                parts: parts
-            },
+            contents: { parts: parts },
             config: {
                 imageConfig: {
                     aspectRatio: aspectRatio,
@@ -247,7 +212,6 @@ export async function generateAdImage(
                 },
             },
         });
-
         for (const part of response.candidates?.[0]?.content?.parts || []) {
             if (part.inlineData) {
                 const base64ImageBytes: string = part.inlineData.data;
@@ -255,18 +219,13 @@ export async function generateAdImage(
                 return `data:${mimeType};base64,${base64ImageBytes}`;
             }
         }
-        
         throw new Error("No se generó ninguna imagen en la respuesta.");
-
     } catch (error) {
         console.error("Error generando imagen:", error);
         throw error;
     }
 }
 
-/**
- * Edita una imagen existente usando Gemini 3 Pro.
- */
 export async function editAdImage(
     base64ImageData: string,
     mimeType: string,
@@ -274,30 +233,17 @@ export async function editAdImage(
     imageSize: string
 ): Promise<string> {
     const ai = getAI();
-
     try {
         const response = await ai.models.generateContent({
             model: imageModel,
             contents: {
                 parts: [
-                    {
-                        inlineData: {
-                            data: base64ImageData,
-                            mimeType: mimeType,
-                        },
-                    },
-                    {
-                        text: editPrompt,
-                    },
+                    { inlineData: { data: base64ImageData, mimeType: mimeType } },
+                    { text: editPrompt },
                 ],
             },
-            config: {
-                 imageConfig: {
-                    imageSize: imageSize
-                 }
-            },
+            config: { imageConfig: { imageSize: imageSize } },
         });
-
         for (const part of response.candidates?.[0]?.content?.parts || []) {
             if (part.inlineData) {
                 const base64ImageBytes: string = part.inlineData.data;
@@ -306,13 +252,11 @@ export async function editAdImage(
             }
         }
         throw new Error("La respuesta de la API de edición de imágenes no contenía una imagen.");
-
     } catch (error) {
         console.error("Error editando la imagen:", error);
         throw error;
     }
 }
-
 
 /**
  * INTERACTIVE ASSISTANT LOGIC
@@ -320,55 +264,51 @@ export async function editAdImage(
 
 const updateFormFunction: FunctionDeclaration = {
     name: 'update_form_fields',
-    description: 'Updates the campaign form fields based on the user conversation. Call this whenever the user confirms or provides clear information for a field.',
+    description: 'Actualiza los campos del formulario. REEMPLAZA los valores actuales por los nuevos.',
     parameters: {
       type: Type.OBJECT,
       properties: {
-        objective: {
-          type: Type.STRING,
-          description: 'The primary objective (e.g., Aumentar ventas, Generar leads)',
+        objective: { 
+            type: Type.STRING, 
+            description: 'Objetivo de la campaña. VALORES PERMITIDOS: "Aumentar ventas", "Generar leads", "Mejorar el reconocimiento de la marca".' 
         },
-        audienceAction: {
-          type: Type.STRING,
-          description: 'What the audience should think or do.',
-        },
-        keyMessage: {
-          type: Type.STRING,
-          description: 'The main message or tagline.',
-        },
-        context: {
-          type: Type.STRING,
-          description: 'Additional product context or background info.',
-        },
+        audienceAction: { type: Type.STRING, description: 'Acción deseada de la audiencia (REEMPLAZA).' },
+        keyMessage: { type: Type.STRING, description: 'Mensaje clave o slogan (REEMPLAZA).' },
+        context: { type: Type.STRING, description: 'Contexto del producto. IMPORTANTE: No hagas append. Envía una descripción UNIFICADA, LIMPIA y EDITADA que reemplace la anterior.' },
       },
     },
 };
   
-export function createInteractiveChat(): Chat {
+export function createInteractiveChat(currentFormState?: {
+    objective: string;
+    audienceAction: string;
+    keyMessage: string;
+    context: string;
+}): Chat {
     const ai = getAI();
     
+    const stateContext = currentFormState ? `
+    ESTADO INICIAL DEL FORMULARIO:
+    - Objetivo: ${currentFormState.objective || 'Aumentar ventas'}
+    - Acción de la audiencia: ${currentFormState.audienceAction || 'No definido'}
+    - Mensaje clave: ${currentFormState.keyMessage || 'No definido'}
+    - Contexto: ${currentFormState.context || 'No definido'}
+    ` : 'El formulario está vacío.';
+
     return ai.chats.create({
         model: textModel,
         config: {
             systemInstruction: `
-            Eres un experto en Marketing y Publicidad. Tu trabajo es ayudar al usuario a definir su campaña publicitaria a través de una conversación natural y fluida.
+            Eres un Director Creativo de Marketing. Tu misión es ayudar al usuario a definir su campaña publicitaria.
             
-            Tu objetivo final es rellenar 4 campos del formulario:
-            1. Objetivo (objective): Aumentar ventas, leads, reconocimiento, etc.
-            2. Acción de la audiencia (audienceAction): Qué deben pensar o hacer.
-            3. Mensaje clave (keyMessage): El slogan o idea fuerza.
-            4. Contexto (context): Detalles del producto, servicio o marca e información de dónde se publicarán los anuncios.
-            
-            REGLAS DE ORO (CRÍTICAS):
-            - SOLO HAZ UNA PREGUNTA A LA VEZ. No pidas toda la información de golpe. Espera la respuesta del usuario antes de pasar al siguiente punto.
-            - NO ASUMAS NADA. Haz preguntas claras para obtener la información de cada campo.
-            - Sugiere ideas brillantes si el usuario duda o está bloqueado, pero siempre pide su confirmación antes de usar la herramienta de actualización.
-            - Sé breve y conciso. Ve paso a paso (un campo a la vez).
-            - Usa la herramienta 'update_form_fields' en cuanto tengas información clara y confirmada para actualizar el formulario en tiempo real.
-            - Una vez que un campo esté validado y guardado con la herramienta, pasa a preguntar por el siguiente.
-            - Al finalizar, cuando todos los campos estén listos, recuérdale al usuario amablemente que debe cerrar este chat y que NO OLVIDE subir sus ASSETS (imágenes, logos) y seleccionar los FORMATOS (Ratios) en el formulario principal.
-            
-            Empieza saludando amablemente y preguntando qué vamos a vender o promocionar hoy.
+            ${stateContext}
+
+            REGLAS DE OPERACIÓN:
+            1. OBJETIVO: Este campo es un selector fijo. Solo puedes elegir entre: "Aumentar ventas", "Generar leads" o "Mejorar el reconocimiento de la marca".
+            2. EDICIÓN LIMPIA: Cuando el usuario quiera cambiar algo del contexto, no te limites a añadir texto al final. REESCRIBE el campo de contexto para que sea una descripción fluida y profesional. La herramienta REEMPLAZA el valor anterior por el que tú envíes.
+            3. Una sola pregunta a la vez. No abrumes al usuario.
+            4. Si el usuario te da información parcial, intégrala en el campo correspondiente usando 'update_form_fields' inmediatamente.
+            5. Si un campo ya tiene información válida y profesional, confírmalo y pasa al siguiente.
             `,
             tools: [{ functionDeclarations: [updateFormFunction] }],
         },

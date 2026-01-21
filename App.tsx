@@ -113,62 +113,53 @@ const App: React.FC = () => {
     try {
         const savedSession = localStorage.getItem(LOCAL_STORAGE_KEY);
         if (savedSession) {
-            const data = JSON.parse(savedSession);
+            // Fix: Explicitly cast JSON.parse result to any to avoid "unknown" type errors during property access
+            const data = JSON.parse(savedSession) as any;
 
             if (data.adCreatives && data.formState && typeof data.totalCost !== 'undefined') {
                 // MIGRATION: Ensure creatives have history structure if loaded from old session
-                const migratedCreatives = data.adCreatives.map((c: any) => {
+                // Use explicit any casts to handle potential unknown types from JSON.parse
+                const migratedCreatives = (data.adCreatives as any[]).map((c: any) => {
                     const migratedVariants: Record<string, AdVariant> = {};
-                    Object.keys(c.variants).forEach(key => {
-                        // Fix: Explicitly cast to any to avoid "unknown" type errors during migration property access
-                        const v = (c.variants as any)[key];
+                    const variants = (c.variants || {}) as Record<string, any>;
+                    Object.keys(variants).forEach(key => {
+                        const v = variants[key] as any;
                         // If it has 'image' but no 'history', migrate it
                         if (v.image && (!v.history || v.history.length === 0)) {
                             migratedVariants[key] = {
                                 ...v,
                                 history: [{ ...v.image, isPreview: false }], // Assume old ones are not preview
                                 currentHistoryIndex: 0
-                            };
+                            } as AdVariant;
                         } else if (!v.history) {
                              migratedVariants[key] = {
                                 ...v,
                                 history: [],
                                 currentHistoryIndex: -1
-                            };
+                            } as AdVariant;
                         } else {
-                            migratedVariants[key] = v;
+                            migratedVariants[key] = v as AdVariant;
                         }
                     });
-                    return { ...c, variants: migratedVariants, status: c.status || 'completed' };
+                    return { ...c, variants: migratedVariants, status: (c as any).status || 'completed' };
                 });
 
                 setAdCreatives(migratedCreatives);
                 setTotalCost(data.totalCost);
                 setUrlSummaryForDisplay(data.urlSummaryForDisplay || null);
 
-                const {
-                    objective,
-                    audienceAction,
-                    keyMessage,
-                    context,
-                    aspectRatios,
-                    imageSize,
-                    numberOfImages,
-                    styleGuideContent,
-                    attachStyleGuideDirectly,
-                    assets
-                } = data.formState;
-
-                setObjective(objective);
-                setAudienceAction(audienceAction);
-                setKeyMessage(keyMessage);
-                setContext(context);
-                setAspectRatios(aspectRatios || ['9:16', '1:1']);
-                setImageSize(imageSize || '1K');
-                setNumberOfImages(numberOfImages);
-                setStyleGuideContent(styleGuideContent || null);
-                setAttachStyleGuideDirectly(attachStyleGuideDirectly);
-                setAssets(assets || []);
+                // Use explicit any cast for form state loading
+                const fs = data.formState as any;
+                setObjective(fs.objective || 'Aumentar ventas');
+                setAudienceAction(fs.audienceAction || '');
+                setKeyMessage(fs.keyMessage || '');
+                setContext(fs.context || '');
+                setAspectRatios(fs.aspectRatios || ['9:16', '1:1']);
+                setImageSize(fs.imageSize || '1K');
+                setNumberOfImages(fs.numberOfImages || 2);
+                setStyleGuideContent(fs.styleGuideContent || null);
+                setAttachStyleGuideDirectly(fs.attachStyleGuideDirectly || false);
+                setAssets(fs.assets || []);
             } else {
                  localStorage.removeItem(LOCAL_STORAGE_KEY);
             }
@@ -195,8 +186,6 @@ const App: React.FC = () => {
         }
     } else if (adCreatives === null && !isGeneratingInitial) {
         // If explicitly cleared (null) and not generating, we might want to clear local storage too
-        // or keep it? For now, if null, user likely cleared it.
-        // But we handle explicit clear in handleClearSession.
     }
   }, [adCreatives, totalCost, urlSummaryForDisplay, formState, isGeneratingInitial]);
 
@@ -685,7 +674,6 @@ const App: React.FC = () => {
                 return c;
             })
         );
-        // setTotalCost(prevCost => prevCost + 0.14); // Optional
     } catch (e) {
         console.error(`Failed to edit image for creative ${id}:`, e);
         setError(formatError(e));
@@ -738,56 +726,53 @@ const App: React.FC = () => {
 
       try {
           const zip = new JSZip();
-          const folderName = creative.title.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'campaign_assets';
-          const rootFolder = zip.folder(folderName);
+          // Normalize concept name for filenames
+          const conceptSlug = creative.title.replace(/[^a-z0-9]/gi, '-').toLowerCase() || 'ad-concept';
           
-          if (!rootFolder) return;
-
-          // Add text info
+          // Add Markdown info file
           const textContent = `
-TITLE: ${creative.title}
-SUBTITLE: ${creative.subtitle}
+# ${creative.title}
+**Subtítulo:** ${creative.subtitle}
 
-RATIONALE:
+## Estrategia Creativa (Rationale)
 ${creative.rationale}
 
-----------------------------------------
+---
 
-PROMPTS USED:
-${Object.entries(creative.variants).map(([ratio, variant]) => `
-[${ratio}]
+## Prompts Utilizados por Formato
+${Object.entries(creative.variants).map(([ratio, variant]: [string, AdVariant]) => `
+### Formato ${ratio}
+\`\`\`text
 ${variant.imagePrompt}
+\`\`\`
 `).join('\n')}
           `.trim();
           
-          rootFolder.file('concept_info.txt', textContent);
+          zip.file(`${conceptSlug}.md`, textContent);
 
-          // Add images
-          const imagesFolder = rootFolder.folder('images');
-          if (imagesFolder) {
-              Object.entries(creative.variants).forEach(([ratio, variant]) => {
-                  const currentImage = variant.history[variant.currentHistoryIndex];
-                  if (currentImage && currentImage.url.startsWith('data:image')) {
-                      // Extract base64
-                      const matches = currentImage.url.match(/^data:image\/(.*?);base64,(.*)$/);
-                      if (matches) {
-                          const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
-                          const data = matches[2];
-                          const filename = `${ratio.replace(':', '-')}.${ext}`;
-                          imagesFolder.file(filename, data, { base64: true });
-                      }
+          // Add images directly to the root of the ZIP
+          Object.entries(creative.variants).forEach(([ratio, variant]: [string, AdVariant]) => {
+              const currentImage = variant.history[variant.currentHistoryIndex];
+              if (currentImage && currentImage.url.startsWith('data:image')) {
+                  const matches = currentImage.url.match(/^data:image\/(.*?);base64,(.*)$/);
+                  if (matches) {
+                      const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+                      const data = matches[2];
+                      // Name format: concept-name-9-16.jpg
+                      const filename = `${conceptSlug}-${ratio.replace(':', '-')}.${ext}`;
+                      zip.file(filename, data, { base64: true });
                   }
-              });
-          }
+              }
+          });
 
-          // Generate zip
+          // Generate zip - Corrected from 'target' to 'type'
           const content = await zip.generateAsync({ type: 'blob' });
           const url = URL.createObjectURL(content);
           
           // Trigger download
           const a = document.createElement('a');
           a.href = url;
-          a.download = `${folderName}.zip`;
+          a.download = `${conceptSlug}-assets.zip`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
@@ -795,7 +780,7 @@ ${variant.imagePrompt}
 
       } catch (err) {
           console.error("Error zipping assets:", err);
-          setError("Error al comprimir los archivos.");
+          setError(`Error al comprimir los archivos: ${err instanceof Error ? err.message : String(err)}`);
       }
   }, [adCreatives]);
 
@@ -864,49 +849,53 @@ ${variant.imagePrompt}
     reader.onload = (event) => {
         try {
             const text = event.target?.result as string;
-            const data = JSON.parse(text);
+            // Fix: Explicitly cast JSON.parse result to any to avoid "unknown" type errors during property access
+            const data = JSON.parse(text) as any;
             if (!data.adCreatives || !data.formState || typeof data.totalCost === 'undefined') {
                 throw new Error("El archivo de importación no es válido.");
             }
-            // Migration logic on import as well
-            const migratedCreatives = data.adCreatives.map((c: any) => {
+            // Migration logic on import
+            // Use explicit any casts to handle unknown property access from imported JSON
+            const migratedCreatives = (data.adCreatives as any[]).map((c: any) => {
                 const migratedVariants: Record<string, AdVariant> = {};
-                Object.keys(c.variants).forEach(key => {
-                    // Fix: Explicitly cast to any to avoid "unknown" type errors during migration property access
-                    const v = (c.variants as any)[key];
+                const variants = (c.variants || {}) as Record<string, any>;
+                Object.keys(variants).forEach(key => {
+                    const v = variants[key] as any;
                     if (v.image && (!v.history || v.history.length === 0)) {
                         migratedVariants[key] = {
                             ...v,
                             history: [{ ...v.image, isPreview: false }],
                             currentHistoryIndex: 0
-                        };
+                        } as AdVariant;
                     } else if (!v.history) {
                          migratedVariants[key] = {
                             ...v,
                             history: [],
                             currentHistoryIndex: -1
-                        };
+                        } as AdVariant;
                     } else {
-                        migratedVariants[key] = v;
+                        migratedVariants[key] = v as AdVariant;
                     }
                 });
-                return { ...c, variants: migratedVariants, status: c.status || 'completed' };
+                return { ...c, variants: migratedVariants, status: (c as any).status || 'completed' };
             });
 
             setAdCreatives(migratedCreatives);
             setTotalCost(data.totalCost);
             setUrlSummaryForDisplay(data.urlSummaryForDisplay || null);
-            const { objective, audienceAction, keyMessage, context, aspectRatios, imageSize, numberOfImages, styleGuideContent, attachStyleGuideDirectly, assets } = data.formState;
-            setObjective(objective);
-            setAudienceAction(audienceAction);
-            setKeyMessage(keyMessage);
-            setContext(context);
-            setAspectRatios(aspectRatios || ['9:16', '1:1']);
-            setImageSize(imageSize || '1K');
-            setNumberOfImages(numberOfImages);
-            setStyleGuideContent(styleGuideContent || null);
-            setAttachStyleGuideDirectly(attachStyleGuideDirectly);
-            setAssets(assets || []);
+            
+            // Use explicit any cast for imported form state
+            const fs = data.formState as any;
+            setObjective(fs.objective || 'Aumentar ventas');
+            setAudienceAction(fs.audienceAction || '');
+            setKeyMessage(fs.keyMessage || '');
+            setContext(fs.context || '');
+            setAspectRatios(fs.aspectRatios || ['9:16', '1:1']);
+            setImageSize(fs.imageSize || '1K');
+            setNumberOfImages(fs.numberOfImages || 2);
+            setStyleGuideContent(fs.styleGuideContent || null);
+            setAttachStyleGuideDirectly(fs.attachStyleGuideDirectly || false);
+            setAssets(fs.assets || []);
             setError(null);
             setIsGeneratingInitial(false);
         } catch (err) {
@@ -1005,7 +994,6 @@ ${variant.imagePrompt}
                 ))}
             </div>
 
-            {/* Generate More Section */}
             <div className="bg-slate-800/40 border border-slate-700 border-dashed rounded-xl p-8 flex flex-col items-center justify-center text-center space-y-4">
                 <h3 className="text-xl font-semibold text-slate-200">¿Necesitas más opciones?</h3>
                 <p className="text-slate-400 max-w-md">Genera conceptos adicionales usando la misma información del formulario.</p>
