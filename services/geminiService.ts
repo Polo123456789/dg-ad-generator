@@ -6,7 +6,7 @@ import type { AdCreativeText, Asset } from '../types';
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const textModel = "gemini-3-flash-preview";
-const imageModel = "gemini-3-pro-image-preview";
+const imageModel = "gemini-3.1-flash-image-preview";
 const previewModel = "imagen-4.0-generate-001"; // Faster, cheaper model
 
 /**

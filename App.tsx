@@ -41,7 +41,7 @@ const App: React.FC = () => {
   const [audienceAction, setAudienceAction] = useState('');
   const [keyMessage, setKeyMessage] = useState('');
   const [context, setContext] = useState('');
-  const [aspectRatios, setAspectRatios] = useState<string[]>(['1:1', '16:9', '3:4']);
+  const [aspectRatios, setAspectRatios] = useState<string[]>(['1:1', '16:9', '9:16']);
   const [imageSize, setImageSize] = useState('1K');
   const [numberOfImages, setNumberOfImages] = useState(2);
   const [styleGuideContent, setStyleGuideContent] = useState<string | null>(null);

@@ -375,7 +375,7 @@ const CampaignInput: React.FC<CampaignInputProps> = ({
              <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">Relaciones de Aspecto (Formatos)</label>
                 <div className="flex flex-wrap gap-2">
-                    {["9:16", "1:1", "16:9", "4:3", "3:4"].map(ratio => (
+                    {["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "5:4", "4:5", "21:9", "4:1", "1:4", "8:1", "1:8"].map(ratio => (
                          <button
                             key={ratio}
                             type="button"
